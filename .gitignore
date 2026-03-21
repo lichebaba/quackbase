@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# DuckDB 数据库（运行时生成）
+*.duckdb
+*.duckdb.wal
+
+# 上传文件和用户数据库
+backend/uploads/
+backend/databases/
+
+# Node
+node_modules/
+frontend-vue/dist/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# 环境变量
+.env
+.env.local

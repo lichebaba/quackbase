@@ -1,0 +1,9 @@
+Looking in indexes: https://pypi.tuna.tsinghua.edu.cn/simple
+Collecting chardet
+  Downloading https://pypi.tuna.tsinghua.edu.cn/packages/f9/36/a5c65fa79d26d84075c9b976081a7713fa1454003e08425f428e61fd7544/chardet-7.1.0-cp310-cp310-macosx_10_9_x86_64.whl (542 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 542.5/542.5 kB 120.9 kB/s eta 0:00:00
+Installing collected packages: chardet
+Successfully installed chardet-7.1.0
+
+[notice] A new release of pip is available: 25.0.1 -> 26.0.1
+[notice] To update, run: pip install --upgrade pip
