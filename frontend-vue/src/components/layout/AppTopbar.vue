@@ -11,6 +11,14 @@
       <span v-else-if="tablesStore.currentTable" class="row-count">{{ realTotal.toLocaleString() }} 行</span>
       <button v-if="dataStore.filters.length > 0" class="btn btn-ghost" @click="doClearFilters">✕ 清除筛选</button>
 
+      <!-- Delete button -->
+      <button v-if="tablesStore.currentTable && authStore.canDelete"
+              class="btn btn-danger" :disabled="deleting"
+              @click="doDelete">
+        <template v-if="deleting"><span class="spinner spinner-light"></span> 删除中...</template>
+        <template v-else>{{ isFiltered ? '✕ 删除筛选数据' : '✕ 清空表数据' }}</template>
+      </button>
+
       <!-- Export dropdown -->
       <div v-if="tablesStore.currentTable" class="export-dropdown" ref="dropdownRef">
         <button class="btn btn-primary" :disabled="exporting" @click="!exporting && (exportOpen = !exportOpen)">
@@ -30,17 +38,20 @@
 import { ref, inject, computed, onMounted, onUnmounted } from 'vue'
 import { useTablesStore } from '../../stores/tables'
 import { useDataStore } from '../../stores/data'
+import { useAuthStore } from '../../stores/auth'
 import { useToastStore } from '../../stores/toast'
 import { useExport } from '../../composables/useExport'
 
 const tablesStore = useTablesStore()
 const dataStore = useDataStore()
+const authStore = useAuthStore()
 const toast = useToastStore()
 const { exportData, exporting } = useExport()
 
 const sidebarCollapsed = inject('sidebarCollapsed')
 const exportOpen = ref(false)
 const dropdownRef = ref(null)
+const deleting = ref(false)
 
 const realTotal = computed(() => {
   const t = tablesStore.tables.find(t => t.name === tablesStore.currentTable)
@@ -55,6 +66,24 @@ function toggleSidebar() {
 function doClearFilters() {
   dataStore.clearFilters()
   dataStore.loadData(tablesStore.currentTable)
+}
+
+async function doDelete() {
+  const msg = isFiltered.value
+    ? `确认删除筛选出的 ${dataStore.total} 条数据？此操作不可撤销。`
+    : `确认清空表 "${tablesStore.currentTable}" 的全部数据？此操作不可撤销。`
+  if (!confirm(msg)) return
+  deleting.value = true
+  try {
+    const res = await dataStore.deleteRows(tablesStore.currentTable)
+    toast.add(`已删除 ${res.deleted_count} 条数据`, 'success')
+    await tablesStore.loadTables()
+    await dataStore.loadData(tablesStore.currentTable)
+  } catch (e) {
+    toast.add(e.message, 'error')
+  } finally {
+    deleting.value = false
+  }
 }
 
 async function doExport(all) {
@@ -115,6 +144,13 @@ onUnmounted(() => document.removeEventListener('click', onClickOutside))
 .export-option:hover { background: var(--surface-3); }
 .export-option + .export-option { border-top: 1px solid var(--border); }
 .btn:disabled { opacity: 0.6; cursor: not-allowed; }
+.btn-danger {
+  background: var(--danger); color: #fff; border: none;
+  padding: 6px 14px; border-radius: var(--radius); font-family: var(--font-ui);
+  font-size: 13px; font-weight: 600; cursor: pointer; transition: opacity 0.15s;
+}
+.btn-danger:hover:not(:disabled) { opacity: 0.85; }
+.spinner-light { border-color: rgba(255,255,255,0.3); border-top-color: #fff; }
 .spinner {
   display: inline-block; width: 12px; height: 12px;
   border: 2px solid rgba(0,0,0,0.2); border-top-color: #000;

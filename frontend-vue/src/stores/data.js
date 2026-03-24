@@ -81,11 +81,21 @@ export const useDataStore = defineStore('data', () => {
     page.value = 1
   }
 
+  async function deleteRows(tableName) {
+    if (!tableName) return null
+    const params = new URLSearchParams()
+    if (filters.value.length > 0) params.set('filters', JSON.stringify(filters.value))
+    if (search.value) params.set('search', search.value)
+    const qs = params.toString()
+    const url = `/api/table/${tableName}/data` + (qs ? `?${qs}` : '')
+    return await apiJson(url, { method: 'DELETE' })
+  }
+
   return {
     columns, rows, total, page, pageSize, totalPages,
     sortCol, sortDir, filters, search,
     reset, loadData, toggleSort,
     addFilter, removeFilter, clearFilters,
-    setSearch, goToPage, setPageSize,
+    setSearch, goToPage, setPageSize, deleteRows,
   }
 })

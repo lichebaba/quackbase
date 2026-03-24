@@ -372,6 +372,36 @@ async def delete_table(table_name: str, user=Depends(require_permission("delete"
         raise HTTPException(500, str(e))
 
 
+# ===== CLEAR TABLE DATA =====
+@router.delete("/table/{table_name}/data")
+async def clear_table_data(
+    table_name: str,
+    filters: Optional[str] = None,
+    search: Optional[str] = None,
+    user=Depends(require_permission("delete")),
+):
+    conn = get_user_db(user["sub"])
+    try:
+        params = []
+        where_clause, params = build_where(json.loads(filters) if filters else [], params)
+
+        if search:
+            cols = conn.execute(f'DESCRIBE "{table_name}"').fetchall()
+            col_list = [{"name": c[0], "type": c[1]} for c in cols]
+            search_clause, params = build_search_clause(col_list, search, params)
+            if search_clause:
+                if where_clause:
+                    where_clause = where_clause + " AND " + search_clause
+                else:
+                    where_clause = "WHERE " + search_clause
+
+        count = conn.execute(f'SELECT COUNT(*) FROM "{table_name}" {where_clause}', params).fetchone()[0]
+        conn.execute(f'DELETE FROM "{table_name}" {where_clause}', params)
+        return {"success": True, "table": table_name, "deleted_count": count}
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
 # ===== FILE MANAGEMENT =====
 @router.get("/files")
 async def list_files(user=Depends(require_permission("upload"))):
