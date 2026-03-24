@@ -163,16 +163,13 @@ async def upload_file(
 
         cols = conn.execute(f'DESCRIBE "{table_name}"').fetchall()
         row_count = conn.execute(f'SELECT COUNT(*) FROM "{table_name}"').fetchone()[0]
-        conn.close()
         return {
             "success": True, "table": table_name, "filename": file.filename,
             "row_count": row_count, "columns": [{"name": c[0], "type": c[1]} for c in cols],
         }
     except HTTPException:
-        conn.close()
         raise
     except Exception as e:
-        conn.close()
         raise HTTPException(500, str(e))
 
 
@@ -218,17 +215,14 @@ async def upload_batch(
                 if set(existing_cols) != staging_cols:
                     conn.execute(f'DROP TABLE "{staging}"')
                     results.append({"filename": file.filename, "success": False, "error": f"列结构不匹配"})
-                    conn.close()
                     continue
                 col_list = ", ".join(f'"{c}"' for c in existing_cols)
                 conn.execute(f'INSERT INTO "{tname}" ({col_list}) SELECT {col_list} FROM "{staging}"')
                 conn.execute(f'DROP TABLE "{staging}"')
 
             row_count = conn.execute(f'SELECT COUNT(*) FROM "{tname}"').fetchone()[0]
-            conn.close()
             results.append({"filename": file.filename, "success": True, "table": tname, "row_count": row_count})
         except Exception as e:
-            conn.close()
             results.append({"filename": file.filename, "success": False, "error": str(e)})
 
     return {"results": results}
@@ -249,10 +243,8 @@ async def list_tables(user=Depends(require_permission("read"))):
                 "name": t, "row_count": count,
                 "columns": [{"name": c[0], "type": c[1]} for c in cols],
             })
-        conn.close()
         return {"tables": result}
     except Exception as e:
-        conn.close()
         raise HTTPException(500, str(e))
 
 
@@ -298,14 +290,12 @@ async def get_table_data(
             for k, v in row.items():
                 if not isinstance(v, (str, int, float, bool, type(None))):
                     row[k] = str(v)
-        conn.close()
         return {
             "columns": [{"name": c[0], "type": c[1]} for c in cols],
             "rows": rows, "total": total, "page": page, "page_size": page_size,
             "total_pages": max(1, (total + page_size - 1) // page_size),
         }
     except Exception as e:
-        conn.close()
         raise HTTPException(500, str(e))
 
 
@@ -343,7 +333,6 @@ async def export_csv(
         conn.execute(
             f"""COPY (SELECT * FROM "{table_name}" {where_clause} {order_clause}) TO '{tmp_path}' (HEADER, DELIMITER ',')"""
         )
-        conn.close()
 
         def generate():
             try:
@@ -367,7 +356,6 @@ async def export_csv(
             },
         )
     except Exception as e:
-        conn.close()
         if os.path.exists(tmp_path):
             os.unlink(tmp_path)
         raise HTTPException(500, str(e))
@@ -379,10 +367,8 @@ async def delete_table(table_name: str, user=Depends(require_permission("delete"
     conn = get_user_db(user["sub"])
     try:
         conn.execute(f'DROP TABLE IF EXISTS "{table_name}"')
-        conn.close()
         return {"success": True}
     except Exception as e:
-        conn.close()
         raise HTTPException(500, str(e))
 
 

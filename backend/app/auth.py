@@ -11,11 +11,16 @@ from .config import SECRET_KEY, ALGORITHM, TOKEN_EXPIRE_HOURS, AUTH_DB, DB_BASE,
 
 bearer_scheme = HTTPBearer()
 
+_DB_CONFIG = {"threads": "1"}
 
-# ===== AUTH DB =====
-def get_auth_conn():
-    conn = duckdb.connect(AUTH_DB)
-    conn.execute("""
+# ===== AUTH DB (single reusable connection) =====
+_auth_conn = None
+
+
+def _init_auth_db():
+    global _auth_conn
+    _auth_conn = duckdb.connect(AUTH_DB, config=_DB_CONFIG)
+    _auth_conn.execute("""
         CREATE TABLE IF NOT EXISTS users (
             id VARCHAR PRIMARY KEY,
             username VARCHAR UNIQUE NOT NULL,
@@ -24,7 +29,13 @@ def get_auth_conn():
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
-    return conn
+
+
+def get_auth_conn():
+    global _auth_conn
+    if _auth_conn is None:
+        _init_auth_db()
+    return _auth_conn
 
 
 def init_admin():
@@ -37,12 +48,16 @@ def init_admin():
             [admin_id, "admin", hash_password("admin123"), ROLE_ADMIN]
         )
         print("Default admin created  ->  admin / admin123  (please change!)")
-    conn.close()
 
 
-# ===== PER-USER DB =====
+# ===== PER-USER DB (cached connections) =====
+_user_db_cache: dict[str, duckdb.DuckDBPyConnection] = {}
+
+
 def get_user_db(user_id: str):
-    return duckdb.connect(str(DB_BASE / f"{user_id}.duckdb"))
+    if user_id not in _user_db_cache:
+        _user_db_cache[user_id] = duckdb.connect(str(DB_BASE / f"{user_id}.duckdb"), config=_DB_CONFIG)
+    return _user_db_cache[user_id]
 
 
 # ===== PASSWORD =====
@@ -73,12 +88,12 @@ def decode_token(token: str) -> dict:
 
 
 # ===== AUTH DEPENDENCY =====
-def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme)):
+async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme)):
     return decode_token(credentials.credentials)
 
 
 def require_permission(permission: str):
-    def checker(user=Depends(get_current_user)):
+    async def checker(user=Depends(get_current_user)):
         role = user.get("role", "viewer")
         if permission not in ROLE_PERMISSIONS.get(role, set()):
             raise HTTPException(status.HTTP_403_FORBIDDEN, f"权限不足（需要 {permission}）")

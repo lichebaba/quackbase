@@ -19,7 +19,6 @@ async def login(body: LoginRequest):
         "SELECT id, username, password_hash, role FROM users WHERE username = ?",
         [body.username]
     ).fetchone()
-    conn.close()
     if not row or not verify_password(body.password, row[2]):
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "用户名或密码错误")
     token = create_token(row[0], row[1], row[3])
@@ -40,11 +39,9 @@ async def change_password(body: ChangePasswordRequest, user=Depends(get_current_
     conn = get_auth_conn()
     row = conn.execute("SELECT password_hash FROM users WHERE id = ?", [user["sub"]]).fetchone()
     if not row or not verify_password(body.old_password, row[0]):
-        conn.close()
         raise HTTPException(400, "原密码错误")
     conn.execute(
         "UPDATE users SET password_hash = ? WHERE id = ?",
         [hash_password(body.new_password), user["sub"]]
     )
-    conn.close()
     return {"success": True}

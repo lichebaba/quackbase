@@ -15,7 +15,6 @@ async def list_users(user=Depends(require_permission("manage_users"))):
     rows = conn.execute(
         "SELECT id, username, role, created_at FROM users ORDER BY created_at"
     ).fetchall()
-    conn.close()
     return {
         "users": [
             {"id": r[0], "username": r[1], "role": r[2], "created_at": str(r[3])}
@@ -35,10 +34,8 @@ async def create_user(body: CreateUserRequest, user=Depends(require_permission("
             "INSERT INTO users (id, username, password_hash, role) VALUES (?, ?, ?, ?)",
             [new_id, body.username, hash_password(body.password), body.role]
         )
-        conn.close()
         return {"success": True, "user": {"id": new_id, "username": body.username, "role": body.role}}
     except Exception:
-        conn.close()
         raise HTTPException(400, f"用户名 '{body.username}' 已存在")
 
 
@@ -48,7 +45,6 @@ async def delete_user(user_id: str, user=Depends(require_permission("manage_user
         raise HTTPException(400, "不能删除自己")
     conn = get_auth_conn()
     conn.execute("DELETE FROM users WHERE id = ?", [user_id])
-    conn.close()
     db_file = DB_BASE / f"{user_id}.duckdb"
     if db_file.exists():
         db_file.unlink()
@@ -64,5 +60,4 @@ async def update_role(user_id: str, body: dict, user=Depends(require_permission(
         raise HTTPException(400, "不能修改自己的角色")
     conn = get_auth_conn()
     conn.execute("UPDATE users SET role = ? WHERE id = ?", [role, user_id])
-    conn.close()
     return {"success": True}

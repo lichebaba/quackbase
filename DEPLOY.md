@@ -113,12 +113,11 @@ docker build -t quackbase-backend .
 docker rm -f quackbase-backend 2>/dev/null
 
 # 启动新容器
-docker run -d \
-  --name quackbase-backend \
-  -p 9630:8000 \
-  --restart always \
-  quackbase-backend
+ docker run -d --name quackbase-backend -p 9630:8000  quackbase-backend
 ```
+
+curl <http://127.0.0.1:9630/api/tables> \
+    -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiI4NDUwY2NmZi01NzZlLTQzYTgtOTQ0ZC03NTE3ODM5MWFiMGUiLCJ1c2VybmFtZSI6ImFkbWluIiwicm9sZSI6ImFkbWluIiwiZXhwIjoxNzc0NDExMTQyfQ.FvqCbUXXvOTQYptAzvlBZoXauovZBzWTYRvUKM9v0Lw"
 
 ### 2.4 验证后端是否启动成功
 
@@ -220,7 +219,8 @@ scp -r backend/ root@服务器IP:/work/proj/khh/quackbase/backend/
 
 # 2. 服务器上重新构建镜像并重启
 cd /work/proj/khh/quackbase/backend
-docker build -t quackbase-backend .
+
+
 docker rm -f quackbase-backend
 docker run -d \
   --name quackbase-backend \
