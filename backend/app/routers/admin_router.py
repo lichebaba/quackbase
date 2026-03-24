@@ -2,7 +2,7 @@ import uuid
 
 from fastapi import APIRouter, Depends, HTTPException
 
-from ..auth import get_auth_conn, require_permission, hash_password
+from ..auth import get_auth_conn, close_user_db, require_permission, hash_password
 from ..config import ROLE_ADMIN, ROLE_EDITOR, ROLE_VIEWER, DB_BASE
 from ..schemas import CreateUserRequest
 
@@ -45,9 +45,13 @@ async def delete_user(user_id: str, user=Depends(require_permission("manage_user
         raise HTTPException(400, "不能删除自己")
     conn = get_auth_conn()
     conn.execute("DELETE FROM users WHERE id = ?", [user_id])
+    close_user_db(user_id)
     db_file = DB_BASE / f"{user_id}.duckdb"
     if db_file.exists():
         db_file.unlink()
+    wal_file = DB_BASE / f"{user_id}.duckdb.wal"
+    if wal_file.exists():
+        wal_file.unlink()
     return {"success": True}
 
 

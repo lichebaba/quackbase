@@ -112,12 +112,16 @@ docker build -t quackbase-backend .
 # 如果之前有旧容器，先删除
 docker rm -f quackbase-backend 2>/dev/null
 
-# 启动新容器
- docker run -d --name quackbase-backend -p 9630:8000  quackbase-backend
+# 启动新容器（SECRET_KEY 必须固定，否则每次重启 token 失效）
+docker run -d \
+  --name quackbase-backend \
+  -p 9630:8000 \
+  -e SECRET_KEY="你自己设一个固定的密钥字符串" \
+  --restart always \
+  quackbase-backend
 ```
 
-curl <http://127.0.0.1:9630/api/tables> \
-    -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiI4NDUwY2NmZi01NzZlLTQzYTgtOTQ0ZC03NTE3ODM5MWFiMGUiLCJ1c2VybmFtZSI6ImFkbWluIiwicm9sZSI6ImFkbWluIiwiZXhwIjoxNzc0NDExMTQyfQ.FvqCbUXXvOTQYptAzvlBZoXauovZBzWTYRvUKM9v0Lw"
+> **重要：** 必须通过 `-e SECRET_KEY=xxx` 指定固定密钥。如果不设置，每次容器重启都会生成随机密钥，导致所有已登录用户的 token 失效。
 
 ### 2.4 验证后端是否启动成功
 
@@ -131,6 +135,11 @@ curl -X POST http://127.0.0.1:9630/api/auth/login \
   -H "Content-Type: application/json" \
   -d '{"username":"admin","password":"admin123"}'
 # 预期返回：{"access_token":"...","token_type":"bearer","user":{...}}
+
+# 用返回的 token 测试业务接口
+curl http://127.0.0.1:9630/api/tables \
+  -H "Authorization: Bearer <上面返回的access_token>"
+# 预期返回：{"tables":[...]}
 ```
 
 如果报错，查看日志：
@@ -219,12 +228,12 @@ scp -r backend/ root@服务器IP:/work/proj/khh/quackbase/backend/
 
 # 2. 服务器上重新构建镜像并重启
 cd /work/proj/khh/quackbase/backend
-
-
+docker build -t quackbase-backend .
 docker rm -f quackbase-backend
 docker run -d \
   --name quackbase-backend \
   -p 9630:8000 \
+  -e SECRET_KEY="你自己设一个固定的密钥字符串" \
   --restart always \
   quackbase-backend
 ```
@@ -253,3 +262,31 @@ docker rm quackbase-backend      # 删除容器
 | Docker 后端 | 9630 | 映射到容器内 8000，仅 127.0.0.1 本地可访问 |
 
 > 阿里云安全组只需放行 80 端口，9630 不需要对外开放。
+
+---
+
+## 常见问题排查
+
+### 请求接口报 `can't start new thread`
+
+**原因：** FastAPI 中普通 `def` 的依赖函数（Depends）会被放到线程池执行，Docker 容器内线程创建受限。
+
+**解决：** 将 `get_current_user` 和 `require_permission` 内部的 `checker` 函数声明为 `async def`，FastAPI 就会直接在事件循环上执行，不再创建线程。
+
+### 登录成功但其他接口返回 401
+
+**原因：** `SECRET_KEY` 未通过环境变量固定，容器重启后生成新密钥，之前的 token 全部失效。
+
+**解决：** 启动容器时必须指定 `-e SECRET_KEY="固定密钥"`。
+
+### 容器频繁重启（502 Bad Gateway）
+
+排查步骤：
+
+```bash
+# 查看重启次数
+docker inspect quackbase-backend --format='{{.RestartCount}}'
+
+# 查看崩溃前日志
+docker logs quackbase-backend --tail 100
+```

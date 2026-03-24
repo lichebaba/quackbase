@@ -60,6 +60,13 @@ def get_user_db(user_id: str):
     return _user_db_cache[user_id]
 
 
+def close_user_db(user_id: str):
+    """关闭并移除缓存的用户数据库连接，释放文件锁。"""
+    conn = _user_db_cache.pop(user_id, None)
+    if conn:
+        conn.close()
+
+
 # ===== PASSWORD =====
 def hash_password(password: str) -> str:
     return hashlib.sha256(password.encode()).hexdigest()
