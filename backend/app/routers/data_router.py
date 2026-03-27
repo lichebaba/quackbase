@@ -263,12 +263,13 @@ async def get_table_data(
     conn = get_user_db(user["sub"])
     try:
         params = []
-        where_clause, params = build_where(json.loads(filters) if filters else [], params)
+        # 获取列类型信息，用于在时间列上做正确的 CAST
+        cols = conn.execute(f'DESCRIBE "{table_name}"').fetchall()
+        col_list = [{"name": c[0], "type": c[1]} for c in cols]
+        where_clause, params = build_where(json.loads(filters) if filters else [], params, col_list)
 
         # Build search clause
         if search:
-            cols = conn.execute(f'DESCRIBE "{table_name}"').fetchall()
-            col_list = [{"name": c[0], "type": c[1]} for c in cols]
             search_clause, params = build_search_clause(col_list, search, params)
             if search_clause:
                 if where_clause:
@@ -299,7 +300,7 @@ async def get_table_data(
         raise HTTPException(500, str(e))
 
 
-# ===== EXPORT CSV (optimized with DuckDB native COPY) =====
+# ===== EXPORT CSV (streaming, low memory) =====
 @router.get("/table/{table_name}/export")
 async def export_csv(
     table_name: str,
@@ -310,9 +311,16 @@ async def export_csv(
     export_all: bool = False,
     user=Depends(require_permission("read")),
 ):
+    """Stream table data as CSV.
+
+    优化点：
+    - 不再使用 DuckDB COPY 写临时文件，减少磁盘 IO
+    - 直接 SELECT *，用 csv.writer 分块 fetchmany + 流式输出，降低内存占用
+    - 仍然复用 build_where_inline / build_search_clause_inline，保证和列表页筛选逻辑一致
+    """
     conn = get_user_db(user["sub"])
-    tmp_path = tempfile.mktemp(suffix='.csv')
     try:
+        # 构造 WHERE 子句
         if export_all:
             where_clause = ""
         else:
@@ -327,37 +335,57 @@ async def export_csv(
                     else:
                         where_clause = "WHERE " + search_clause
 
-        order_clause = f'ORDER BY "{sort_col}" {"DESC" if sort_dir.lower() == "desc" else "ASC"}' if sort_col else ""
-
-        # Use DuckDB native COPY for all cases (fastest)
-        conn.execute(
-            f"""COPY (SELECT * FROM "{table_name}" {where_clause} {order_clause}) TO '{tmp_path}' (HEADER, DELIMITER ',')"""
+        order_clause = (
+            f'ORDER BY "{sort_col}" {"DESC" if sort_dir.lower() == "desc" else "ASC"}'
+            if sort_col
+            else ""
         )
+        sql = f'SELECT * FROM "{table_name}" {where_clause} {order_clause}'
+
+        # 执行查询，保留 cursor 用于流式 fetch
+        cur = conn.execute(sql)
+        cols = [d[0] for d in cur.description]
 
         def generate():
-            try:
-                yield b'\xef\xbb\xbf'
-                with open(tmp_path, 'rb') as f:
-                    while True:
-                        chunk = f.read(65536)
-                        if not chunk:
-                            break
-                        yield chunk
-            finally:
-                if os.path.exists(tmp_path):
-                    os.unlink(tmp_path)
+            # 先输出 UTF-8 BOM，兼容 Excel
+            yield b"\xef\xbb\xbf"
+
+            buffer = io.StringIO()
+            writer = csv.writer(buffer)
+
+            # 写表头
+            writer.writerow(cols)
+            chunk = buffer.getvalue().encode("utf-8")
+            if chunk:
+                yield chunk
+            buffer.seek(0)
+            buffer.truncate(0)
+
+            # 分批拉取数据，避免一次性加载过多行
+            while True:
+                rows = cur.fetchmany(10000)
+                if not rows:
+                    break
+                for row in rows:
+                    writer.writerow(row)
+                chunk = buffer.getvalue().encode("utf-8")
+                if chunk:
+                    yield chunk
+                buffer.seek(0)
+                buffer.truncate(0)
 
         encoded_filename = quote(f"{table_name}_export.csv")
         return StreamingResponse(
             generate(),
             media_type="text/csv; charset=utf-8",
             headers={
-                "Content-Disposition": f"attachment; filename=\"export.csv\"; filename*=UTF-8''{encoded_filename}",
+                "Content-Disposition": (
+                    f"attachment; filename=\"export.csv\"; "
+                    f"filename*=UTF-8''{encoded_filename}"
+                ),
             },
         )
     except Exception as e:
-        if os.path.exists(tmp_path):
-            os.unlink(tmp_path)
         raise HTTPException(500, str(e))
 
 

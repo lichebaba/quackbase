@@ -11,7 +11,7 @@ from .config import SECRET_KEY, ALGORITHM, TOKEN_EXPIRE_HOURS, AUTH_DB, DB_BASE,
 
 bearer_scheme = HTTPBearer()
 
-_DB_CONFIG = {"threads": "1"}
+_DB_CONFIG = {"threads": "4"}
 
 # ===== AUTH DB (single reusable connection) =====
 _auth_conn = None

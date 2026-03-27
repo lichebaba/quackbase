@@ -157,24 +157,33 @@ docker logs quackbase-backend --tail 20
 ```nginx
 # ===== QuackBase 数据管理平台 =====
 # 前端静态文件
-location /quackbase {
-    alias /work/proj/khh/quackbase/dist;
-    index index.html index.htm;
-    try_files $uri $uri/ /quackbase/index.html;
-}
+    location ^~ /quackbase/api/ {
+                expires -1s;
+                add_header Cache-Control no-cache;
+                add_header Cache-Control no-store;
+                #rewrite ^/quackbase(/api/.*)$ $1 break;
+                proxy_pass http://127.0.0.1:9630/api/;
+                proxy_set_header Host $host;
+                proxy_set_header X-real-ip $remote_addr;
+                proxy_set_header X-Forwarded-For $remote_addr;
+                proxy_request_buffering off;
+                client_max_body_size 500m;
+                proxy_connect_timeout 600s;
+                proxy_send_timeout 600s;
+                proxy_read_timeout 600s;
+        }
 
-# 后端 API 反向代理
-location /quackbase/api/ {
-    expires -1s;
-    add_header Cache-Control no-cache;
-    add_header Cache-Control no-store;
-    rewrite ^/quackbase(/api/.*)$ $1 break;
-    proxy_pass http://127.0.0.1:9630;
-    proxy_set_header Host $host;
-    proxy_set_header X-real-ip $remote_addr;
-    proxy_set_header X-Forwarded-For $remote_addr;
-    client_max_body_size 500m;
-}
+        # 前端静态资源（完美版，不吞JS）
+        location /quackbase/ {
+                alias /work/proj/khh/quackbase/dist/;
+                index index.html;
+
+                # 重点：用 if 判断，绝对不影响静态资源
+        #if (!-e $request_filename) {
+                #       rewrite ^ /quackbase/index.html last;
+                #}
+               try_files $uri $uri/ /quackbase/index.html;
+        }
 ```
 
 测试配置并重载：
@@ -290,3 +299,122 @@ docker inspect quackbase-backend --format='{{.RestartCount}}'
 # 查看崩溃前日志
 docker logs quackbase-backend --tail 100
 ```
+
+问题定位好了：这是 python-multipart 的 1MB 默认限制没被正确改掉，跟你代码里的 CSV 逻辑无关。你现在打到 127.0.0.1:9630，已经绕过
+  Nginx，所以就是容器里 FastAPI/Starlette 在解析 multipart 的时候直接把请求拒了，返回：
+
+  {"detail":"There was an error parsing the body"}
+
+  问题点在哪里？
+
+  看你这两处代码：
+
+- quackbase/backend/app/**init**.py:4-7
+
+# 大文件上传限制（500MB）
+
+  MAX_UPLOAD_SIZE = 500 *1024* 1024
+  os.environ["MULTIPART_MAX_PART_SIZE"] = str(MAX_UPLOAD_SIZE)
+  os.environ["MULTIPART_MAX_FILE_SIZE"] = str(MAX_UPLOAD_SIZE)
+
+- quackbase/backend/Dockerfile:5-7
+
+# 设置大文件上传环境变量（python-multipart 0.0.6 会读取）
+
+  ENV MULTIPART_MAX_PART_SIZE=524288000
+  ENV MULTIPART_MAX_FILE_SIZE=524288000
+
+  关键问题：环境变量名字写错了一个。
+
+  python-multipart 实际上读的是：
+
+- MULTIPART_MAX_MEMORY_SIZE  → 控制内存中可解析的 body 大小（默认 1MB）
+- MULTIPART_MAX_FILE_SIZE    → 控制单个文件最大大小
+
+  你现在设置的是 MULTIPART_MAX_PART_SIZE，这个变量库根本不认，所以：
+
+- MULTIPART_MAX_MEMORY_SIZE 还是默认 1MB
+- 上传超过 1MB（比如你测试的 2MB）时，解析器直接抛错
+- Starlette 把这个错误包成 HTTPException(400, "There was an error parsing the body") 返回
+  
+  所以 >1MB 一律 400。
+
+  如何修？
+  
+  把所有 MULTIPART_MAX_PART_SIZE 改成 MULTIPART_MAX_MEMORY_SIZE，然后重建镜像、重启容器。
+
+  1. 修改 app 初始化代码
+  quackbase/backend/app/**init**.py 现在是：
+
+# 大文件上传限制（500MB）
+
+  MAX_UPLOAD_SIZE = 500 *1024* 1024
+  os.environ["MULTIPART_MAX_PART_SIZE"] = str(MAX_UPLOAD_SIZE)
+  os.environ["MULTIPART_MAX_FILE_SIZE"] = str(MAX_UPLOAD_SIZE)
+
+  改成：
+
+# 大文件上传限制（500MB）
+
+  MAX_UPLOAD_SIZE = 500 *1024* 1024
+
+# python-multipart 读的是 MULTIPART_MAX_MEMORY_SIZE 和 MULTIPART_MAX_FILE_SIZE
+
+  os.environ["MULTIPART_MAX_MEMORY_SIZE"] = str(MAX_UPLOAD_SIZE)
+  os.environ["MULTIPART_MAX_FILE_SIZE"] = str(MAX_UPLOAD_SIZE)
+
+  1. 修改 Dockerfile 环境变量
+  quackbase/backend/Dockerfile 现在是：
+
+# 设置大文件上传环境变量（python-multipart 0.0.6 会读取）
+
+  ENV MULTIPART_MAX_PART_SIZE=524288000
+  ENV MULTIPART_MAX_FILE_SIZE=524288000
+
+  改成：
+
+# 设置大文件上传环境变量（python-multipart 会读取）
+
+  ENV MULTIPART_MAX_MEMORY_SIZE=524288000
+  ENV MULTIPART_MAX_FILE_SIZE=524288000
+
+  1. 重建并重启后端容器
+
+  在服务器上（DEPLOY.md 里也有类似步骤）：
+
+  cd /work/proj/khh/quackbase/backend
+
+# 重新构建镜像
+
+  docker build -t quackbase-backend .
+
+# 删除旧容器
+
+  docker rm -f quackbase-backend
+
+# 重新启动
+
+  docker run -d \
+    --name quackbase-backend \
+    -p 9630:8000 \
+    -e SECRET_KEY="你自己设一个固定的密钥字符串" \
+    --restart always \
+    quackbase-backend
+
+  1. 再用 curl 测一下
+
+  curl -X POST <http://127.0.0.1:9630/api/upload> \
+    -H "Authorization: Bearer <你的token>" \
+    -F "file=@/tmp/test_2mb.bin" \
+    -v
+
+  这次如果只改了 size 限制，解析阶段就不会再 400，会进到你的 upload_file 逻辑里（然后可能因为不是 csv/xlsx 被你自己的校验拦下来，这是正常的）。
+
+  你可以再准备一个 >1MB 的 csv 文件（比如复制一行多次），确认真正能被 /api/upload 接收并入库。
+  
+  ---
+  如果你愿意，我也可以帮你写一个小的 Python 脚本，在容器里直接打印当前的 python-multipart 版本和这两个环境变量的值，用来确认配置确实生效。
+
+  Sources:
+
+- （本问题没有查到有效的线上搜索结果，分析完全基于当前仓库代码与已知的 FastAPI / python-multipart 行为）
