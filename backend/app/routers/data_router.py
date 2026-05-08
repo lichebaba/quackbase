@@ -485,14 +485,15 @@ async def export_csv(
     """
     conn = get_user_db(user["sub"])
     try:
+        # 提前拿一次 DESCRIBE，给 filter 和 search 共享列类型信息
+        cols_desc = conn.execute(f'DESCRIBE "{table_name}"').fetchall()
+        col_list = [{"name": c[0], "type": c[1]} for c in cols_desc]
         # 构造 WHERE 子句
         if export_all:
             where_clause = ""
         else:
-            where_clause = build_where_inline(json.loads(filters) if filters else [])
+            where_clause = build_where_inline(json.loads(filters) if filters else [], col_list)
             if search:
-                cols_desc = conn.execute(f'DESCRIBE "{table_name}"').fetchall()
-                col_list = [{"name": c[0], "type": c[1]} for c in cols_desc]
                 search_clause = build_search_clause_inline(col_list, search)
                 if search_clause:
                     if where_clause:
@@ -576,11 +577,11 @@ async def clear_table_data(
     conn = get_user_db(user["sub"])
     try:
         params = []
-        where_clause, params = build_where(json.loads(filters) if filters else [], params)
+        cols = conn.execute(f'DESCRIBE "{table_name}"').fetchall()
+        col_list = [{"name": c[0], "type": c[1]} for c in cols]
+        where_clause, params = build_where(json.loads(filters) if filters else [], params, col_list)
 
         if search:
-            cols = conn.execute(f'DESCRIBE "{table_name}"').fetchall()
-            col_list = [{"name": c[0], "type": c[1]} for c in cols]
             search_clause, params = build_search_clause(col_list, search, params)
             if search_clause:
                 if where_clause:

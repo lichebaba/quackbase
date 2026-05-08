@@ -174,6 +174,13 @@ function onFileChange(e) {
 }
 
 function dispatchSelectedFiles(files) {
+  const LARGE_CSV_THRESHOLD = 500 * 1024 * 1024
+  const oversized = files.filter(f => /\.csv$/i.test(f.name) && f.size >= LARGE_CSV_THRESHOLD)
+  if (oversized.length > 0) {
+    const list = oversized.map(f => `${f.name}（${formatSize(f.size)}）`).join('、')
+    toast.add(`以下 CSV 已达 500MB，请先压缩为 ZIP 再上传以加快传输：${list}`, 'error')
+    return
+  }
   const zipFiles = files.filter(f => /\.zip$/i.test(f.name))
   const tabFiles = files.filter(f => /\.(csv|xlsx)$/i.test(f.name))
   if (zipFiles.length > 0 && (zipFiles.length > 1 || tabFiles.length > 0)) {

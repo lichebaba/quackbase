@@ -1,24 +1,69 @@
+import re
+
+_TS_VAL_RE = re.compile(r"^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}")
+_DATE_VAL_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+
+def _detect_cast_type(col_type: str, val):
+    """Return 'TIMESTAMP' / 'DATE' / None based on column metadata, with a value-format
+    fallback when column type is missing or unrecognized."""
+    t = (col_type or "").upper()
+    # 列类型已知：兼容 TIMESTAMP / TIMESTAMP_NS / TIMESTAMP WITH TIME ZONE / DATETIME
+    if "TIMESTAMP" in t or t.startswith("DATETIME"):
+        return "TIMESTAMP"
+    if t.startswith("DATE"):
+        return "DATE"
+    # 列类型未知时，看值的格式做兜底：避免 col_types 拿不到导致 SQL 缺 CAST 报类型错
+    if isinstance(val, str):
+        v = val.strip()
+        if _TS_VAL_RE.match(v):
+            return "TIMESTAMP"
+        if _DATE_VAL_RE.match(v):
+            return "DATE"
+    return None
+
+
+def _build_col_types(columns):
+    """Build a column-name → type-upper dict, with strip() variants as fallback keys to
+    tolerate stray whitespace / zero-width chars in column names."""
+    col_types = {}
+    if not columns:
+        return col_types
+    for c in columns:
+        name = c["name"]
+        t = c["type"].upper()
+        col_types[name] = t
+        if isinstance(name, str):
+            stripped = name.strip()
+            if stripped and stripped != name and stripped not in col_types:
+                col_types[stripped] = t
+    return col_types
+
+
+def _lookup_col_type(col_types: dict, col: str) -> str:
+    if col in col_types:
+        return col_types[col]
+    if isinstance(col, str):
+        return col_types.get(col.strip(), "")
+    return ""
+
+
 def build_where(filter_list, params, columns=None):
     """Build WHERE clause using parametrized queries.
 
     columns: optional list of {"name": ..., "type": ...} from DESCRIBE,
     used to add proper CAST for DATE/TIMESTAMP columns to避免类型转换错误。
     """
-    col_types = {}
-    if columns:
-        col_types = {c["name"]: c["type"].upper() for c in columns}
+    col_types = _build_col_types(columns)
 
     conditions = []
     for f in filter_list:
         col, op, val = f["col"], f["op"], f.get("val", "")
-        col_type = col_types.get(col, "")
-        is_date = col_type.startswith("DATE")
-        is_ts = col_type.startswith("TIMESTAMP")
+        col_type = _lookup_col_type(col_types, col)
+        cast_type = _detect_cast_type(col_type, val)
 
         if op in ("=", "!=", ">", "<", ">=", "<="):
-            if is_ts or is_date:
-                # 显式按列类型做 CAST，避免字符串比较导致的转换错误
-                cast_type = "TIMESTAMP" if is_ts else "DATE"
+            if cast_type:
                 conditions.append(f'"{col}" {op} CAST(? AS {cast_type})')
             else:
                 conditions.append(f'"{col}" {op} ?')
@@ -56,17 +101,13 @@ def _escape_sql_value(val):
 
 def build_where_inline(filter_list, columns=None):
     """Build WHERE clause with values inlined (for COPY/inline SQL statements)."""
-    col_types = {}
-    if columns:
-        col_types = {c["name"]: c["type"].upper() for c in columns}
+    col_types = _build_col_types(columns)
 
     conditions = []
     for f in filter_list:
         col, op, val = f["col"], f["op"], f.get("val", "")
-        col_type = col_types.get(col, "")
-        is_date = col_type.startswith("DATE")
-        is_ts = col_type.startswith("TIMESTAMP")
-        cast_type = "TIMESTAMP" if is_ts else "DATE" if is_date else None
+        col_type = _lookup_col_type(col_types, col)
+        cast_type = _detect_cast_type(col_type, val)
 
         if op in ("=", "!=", ">", "<", ">=", "<="):
             if cast_type:
@@ -76,7 +117,7 @@ def build_where_inline(filter_list, columns=None):
             else:
                 conditions.append(f'"{col}" {op} {_escape_sql_value(val)}')
         elif op == "LIKE":
-            conditions.append(f'"{col}" LIKE {_escape_sql_value(f"%{val}%")})')
+            conditions.append(f'"{col}" LIKE {_escape_sql_value(f"%{val}%")}')
         elif op == "IS NULL":
             conditions.append(f'"{col}" IS NULL')
         elif op == "IS NOT NULL":
