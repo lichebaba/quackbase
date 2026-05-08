@@ -1,14 +1,14 @@
 <template>
   <div class="upload-zone" :class="{ dragging }" @click="triggerInput" @dragover.prevent="dragging = true" @dragleave="dragging = false" @drop.prevent="onDrop">
-    <input ref="fileRef" type="file" accept=".csv,.xlsx" multiple hidden @change="onFileChange" />
+    <input ref="fileRef" type="file" accept=".csv,.xlsx,.zip" multiple hidden @change="onFileChange" />
     <div class="upload-icon">⬆</div>
     <div class="upload-hint">拖拽或点击上传</div>
-    <div class="upload-sub">支持 CSV、XLSX 文件</div>
+    <div class="upload-sub">支持 CSV、XLSX、ZIP 文件</div>
   </div>
 
-  <!-- Import mode dialog -->
   <ModalBase :show="showModeDialog" title="选择导入方式" @close="cancelUpload">
-    <div class="mode-options">
+    <div v-if="isZipMode" class="zip-banner">📦 来自 ZIP：{{ zipFilename }}（{{ pendingFiles.length }} 个文件）</div>
+    <div v-if="!isZipMode" class="mode-options">
       <label class="mode-option" :class="{ active: uploadMode === 'replace' }">
         <input type="radio" v-model="uploadMode" value="replace" />
         <div class="mode-content">
@@ -24,7 +24,7 @@
         </div>
       </label>
     </div>
-    <div v-if="uploadMode === 'append'" class="form-row">
+    <div v-if="!isZipMode && uploadMode === 'append'" class="form-row">
       <label>目标表</label>
       <select class="form-select" v-model="targetTable">
         <option value="">-- 请选择目标表 --</option>
@@ -38,11 +38,11 @@
       <div v-for="(f, i) in pendingFiles" :key="i" class="pending-file-row">
         <div class="pending-file">
           <span class="file-icon">📄</span>
-          <span class="file-name">{{ f.file.name }}</span>
-          <span class="file-size">{{ formatSize(f.file.size) }}</span>
-          <button class="file-remove" @click="removePendingFile(i)">✕</button>
+          <span class="file-name">{{ f.relativePath || f.file.name }}</span>
+          <span class="file-size">{{ formatSize(f.size ?? f.file?.size ?? 0) }}</span>
+          <button v-if="!isZipMode" class="file-remove" @click="removePendingFile(i)">✕</button>
         </div>
-        <div v-if="uploadMode === 'replace'" class="table-name-row">
+        <div v-if="isZipMode || uploadMode === 'replace'" class="table-name-row">
           <label class="table-name-label">表名</label>
           <input class="table-name-input" v-model="f.tableName" placeholder="自动生成" />
         </div>
@@ -65,6 +65,47 @@
       </button>
     </template>
   </ModalBase>
+
+  <ModalBase :show="showSheetPreviewDialog" title="多 Sheet 导入预览" @close="cancelSheetPreview" wide>
+    <div class="sheet-preview-summary">
+      <div class="sheet-preview-title">{{ previewFilename }}</div>
+      <div class="sheet-preview-sub">相同表头的 Sheet 已自动分组；你可以选择是否导入，并修改每张表名。</div>
+    </div>
+
+    <div v-for="group in previewGroups" :key="group.group_id" class="sheet-group-card">
+      <div class="sheet-group-header">
+        <label class="sheet-group-check">
+          <input type="checkbox" v-model="group.include" />
+          <span>导入该分组</span>
+        </label>
+        <span class="sheet-group-meta">{{ group.sheet_names.length }} 个 Sheet · {{ group.row_count.toLocaleString() }} 行</span>
+      </div>
+      <div class="table-name-row sheet-table-name-row">
+        <label class="table-name-label">表名</label>
+        <input class="table-name-input" v-model="group.table_name" placeholder="自动生成" :disabled="!group.include" />
+      </div>
+      <div class="sheet-group-list">
+        <div class="sheet-group-label">包含 Sheet：</div>
+        <div class="sheet-chip-list">
+          <span v-for="sheet in group.sheet_names" :key="sheet" class="sheet-chip">{{ sheet }}</span>
+        </div>
+      </div>
+      <div class="sheet-group-list">
+        <div class="sheet-group-label">表头：</div>
+        <div class="header-chip-list">
+          <span v-for="(header, idx) in group.header" :key="idx" class="header-chip">{{ header || '（空列名）' }}</span>
+        </div>
+      </div>
+    </div>
+
+    <template #footer>
+      <button class="btn btn-ghost" @click="cancelSheetPreview" :disabled="importing">返回</button>
+      <button class="btn btn-primary" :disabled="!canConfirmSheetPreview || importing" @click="confirmSheetImport">
+        <span v-if="importing" class="btn-loading-spinner"></span>
+        {{ importing ? '导入中...' : '确认导入这些分组' }}
+      </button>
+    </template>
+  </ModalBase>
 </template>
 
 <script setup>
@@ -82,7 +123,6 @@ const toast = useToastStore()
 const fileRef = ref(null)
 const dragging = ref(false)
 
-// Mode dialog state
 const showModeDialog = ref(false)
 const uploadMode = ref('replace')
 const targetTable = ref('')
@@ -92,28 +132,59 @@ const importing = ref(false)
 const importProgress = ref(0)
 const importProgressText = ref('')
 
+const isZipMode = ref(false)
+const originalZipFile = ref(null)
+const zipFilename = ref('')
+
+const showSheetPreviewDialog = ref(false)
+const previewFile = ref(null)
+const previewFilename = ref('')
+const previewGroups = ref([])
+
 const canConfirm = computed(() => {
   if (pendingFiles.value.length === 0) return false
+  if (isZipMode.value) {
+    return pendingFiles.value.every(f => f.tableName && f.tableName.trim())
+  }
   if (uploadMode.value === 'append' && !targetTable.value) return false
   return true
+})
+
+const canConfirmSheetPreview = computed(() => {
+  const selected = previewGroups.value.filter(g => g.include)
+  return selected.length > 0 && selected.every(g => g.table_name && g.table_name.trim())
 })
 
 function triggerInput() { fileRef.value?.click() }
 
 function onDrop(e) {
   dragging.value = false
-  const files = Array.from(e.dataTransfer.files).filter(f => f.name.endsWith('.csv') || f.name.endsWith('.xlsx'))
+  const files = Array.from(e.dataTransfer.files).filter(f => /\.(csv|xlsx|zip)$/i.test(f.name))
   if (files.length === 0) {
-    toast.add('只支持 CSV 和 XLSX 文件', 'error')
+    toast.add('只支持 CSV、XLSX、ZIP 文件', 'error')
     return
   }
-  openModeDialog(files)
+  dispatchSelectedFiles(files)
 }
 
 function onFileChange(e) {
-  const files = Array.from(e.target.files).filter(f => f.name.endsWith('.csv') || f.name.endsWith('.xlsx'))
-  if (files.length > 0) openModeDialog(files)
+  const files = Array.from(e.target.files).filter(f => /\.(csv|xlsx|zip)$/i.test(f.name))
+  if (files.length > 0) dispatchSelectedFiles(files)
   fileRef.value.value = ''
+}
+
+function dispatchSelectedFiles(files) {
+  const zipFiles = files.filter(f => /\.zip$/i.test(f.name))
+  const tabFiles = files.filter(f => /\.(csv|xlsx)$/i.test(f.name))
+  if (zipFiles.length > 0 && (zipFiles.length > 1 || tabFiles.length > 0)) {
+    toast.add('一次只能上传一个 ZIP，且不能与其他文件混合', 'error')
+    return
+  }
+  if (zipFiles.length === 1) {
+    openZipPreview(zipFiles[0])
+    return
+  }
+  if (tabFiles.length > 0) openModeDialog(tabFiles)
 }
 
 function defaultTableName(filename) {
@@ -124,12 +195,57 @@ function openModeDialog(files) {
   pendingFiles.value = files.map(f => ({ file: f, tableName: defaultTableName(f.name) }))
   uploadMode.value = 'replace'
   targetTable.value = ''
+  isZipMode.value = false
+  originalZipFile.value = null
+  zipFilename.value = ''
   showModeDialog.value = true
+}
+
+async function openZipPreview(zipFile) {
+  importing.value = true
+  importProgressText.value = '正在解析 ZIP...'
+  try {
+    const fd = new FormData()
+    fd.append('file', zipFile)
+    const res = await api('/api/upload/zip-preview', { method: 'POST', body: fd })
+    const data = await res.json()
+    if (!data.files || data.files.length === 0) {
+      toast.add('ZIP 中没有可导入的文件', 'error')
+      return
+    }
+    pendingFiles.value = data.files.map(f => ({
+      relativePath: f.relative_path,
+      tableName: f.default_table_name,
+      size: f.size,
+    }))
+    originalZipFile.value = zipFile
+    zipFilename.value = data.filename
+    isZipMode.value = true
+    uploadMode.value = 'replace'
+    targetTable.value = ''
+    showModeDialog.value = true
+  } catch (e) {
+    toast.add(e.message, 'error')
+  } finally {
+    importing.value = false
+    importProgressText.value = ''
+  }
 }
 
 function cancelUpload() {
   showModeDialog.value = false
   pendingFiles.value = []
+  isZipMode.value = false
+  originalZipFile.value = null
+  zipFilename.value = ''
+}
+
+function cancelSheetPreview() {
+  showSheetPreviewDialog.value = false
+  previewFile.value = null
+  previewFilename.value = ''
+  previewGroups.value = []
+  importing.value = false
 }
 
 function removePendingFile(idx) {
@@ -138,10 +254,20 @@ function removePendingFile(idx) {
 }
 
 async function confirmUpload() {
+  if (isZipMode.value) {
+    await confirmZipImport()
+    return
+  }
+
   const items = [...pendingFiles.value]
   const mode = uploadMode.value
   const target = targetTable.value
   const comments = skipComments.value
+
+  if (mode === 'replace' && items.length === 1 && items[0].file.name.endsWith('.xlsx')) {
+    await previewXlsx(items[0].file)
+    return
+  }
 
   importing.value = true
   importProgress.value = 0
@@ -151,7 +277,7 @@ async function confirmUpload() {
     for (let i = 0; i < items.length; i++) {
       const { file, tableName } = items[i]
       importProgressText.value = `正在导入 (${i + 1}/${items.length}): ${file.name}`
-      importProgress.value = Math.round(((i) / items.length) * 100)
+      importProgress.value = Math.round((i / items.length) * 100)
       const customName = mode === 'replace' ? tableName.trim() : ''
       await uploadSingle(file, mode, target, comments, customName)
     }
@@ -162,6 +288,121 @@ async function confirmUpload() {
     importing.value = false
     showModeDialog.value = false
     pendingFiles.value = []
+  }
+}
+
+async function confirmZipImport() {
+  if (!originalZipFile.value) return
+  importing.value = true
+  importProgress.value = 10
+  importProgressText.value = '正在导入 ZIP 内容...'
+  try {
+    const fd = new FormData()
+    fd.append('file', originalZipFile.value)
+    fd.append('plan', JSON.stringify({
+      skip_comments: skipComments.value,
+      items: pendingFiles.value.map(f => ({
+        relative_path: f.relativePath,
+        table_name: f.tableName.trim(),
+      })),
+    }))
+    const res = await api('/api/upload/zip-import', { method: 'POST', body: fd })
+    const data = await res.json()
+    const ok = (data.results || []).filter(r => r.success)
+    const bad = (data.results || []).filter(r => !r.success)
+    for (const r of ok) toast.add(`已导入 "${r.table}"（${r.row_count.toLocaleString()} 行）`, 'success')
+    for (const r of bad) toast.add(`${r.relative_path} 失败：${r.error}`, 'error')
+    await tablesStore.loadTables()
+    if (ok.length > 0) {
+      const last = ok[ok.length - 1]
+      tablesStore.selectTable(last.table)
+      dataStore.reset()
+      await dataStore.loadData(last.table)
+    }
+    window.dispatchEvent(new Event('files-changed'))
+  } catch (e) {
+    toast.add(e.message, 'error')
+  } finally {
+    importing.value = false
+    importProgress.value = 0
+    importProgressText.value = ''
+    showModeDialog.value = false
+    pendingFiles.value = []
+    isZipMode.value = false
+    originalZipFile.value = null
+    zipFilename.value = ''
+  }
+}
+
+async function previewXlsx(file) {
+  importing.value = true
+  importProgress.value = 20
+  importProgressText.value = '正在分析多 Sheet Excel...'
+  try {
+    const formData = new FormData()
+    formData.append('file', file)
+    const res = await api('/api/upload/xlsx-preview', { method: 'POST', body: formData })
+    const data = await res.json()
+    previewFile.value = file
+    previewFilename.value = data.filename
+    previewGroups.value = (data.groups || []).map(g => ({
+      ...g,
+      include: true,
+      table_name: g.default_table_name,
+    }))
+    showModeDialog.value = false
+    showSheetPreviewDialog.value = true
+  } catch (e) {
+    toast.add(e.message, 'error')
+  } finally {
+    importing.value = false
+    importProgress.value = 0
+    importProgressText.value = ''
+  }
+}
+
+async function confirmSheetImport() {
+  if (!previewFile.value) return
+  importing.value = true
+  importProgress.value = 10
+  importProgressText.value = '正在导入多 Sheet 分组...'
+  try {
+    const formData = new FormData()
+    formData.append('file', previewFile.value)
+    formData.append('mode', 'replace')
+    formData.append('skip_comments', skipComments.value ? 'true' : 'false')
+    formData.append('plan', JSON.stringify(previewGroups.value.map(g => ({
+      group_id: g.group_id,
+      table_name: g.table_name.trim(),
+      sheet_names: g.sheet_names,
+      include: g.include,
+    }))))
+    const res = await api('/api/upload/xlsx-import', { method: 'POST', body: formData })
+    const data = await res.json()
+    const results = data.results || []
+    for (const item of results) {
+      toast.add(`已导入 "${item.table}"，共 ${item.row_count.toLocaleString()} 行`, 'success')
+    }
+    await tablesStore.loadTables()
+    if (results.length > 0) {
+      const last = results[results.length - 1]
+      tablesStore.selectTable(last.table)
+      dataStore.reset()
+      await dataStore.loadData(last.table)
+    }
+    window.dispatchEvent(new Event('files-changed'))
+    showSheetPreviewDialog.value = false
+    pendingFiles.value = []
+  } catch (e) {
+    toast.add(e.message, 'error')
+    throw e
+  } finally {
+    importing.value = false
+    importProgress.value = 0
+    importProgressText.value = ''
+    previewFile.value = null
+    previewFilename.value = ''
+    previewGroups.value = []
   }
 }
 
@@ -216,8 +457,6 @@ function formatSize(bytes) {
 .progress-bar { height: 3px; background: var(--surface-3); border-radius: 2px; overflow: hidden; margin-bottom: 6px; }
 .progress-fill { height: 100%; background: var(--accent); transition: width 0.3s ease; border-radius: 2px; }
 .upload-progress span { font-size: 11px; color: var(--text-sub); font-family: var(--font-mono); }
-
-/* Import loading state in modal */
 .import-loading {
   display: flex; flex-direction: column; align-items: center; gap: 10px;
   padding: 16px 0 8px;
@@ -244,9 +483,12 @@ function formatSize(bytes) {
   margin-right: 6px; vertical-align: middle;
 }
 @keyframes spin { to { transform: rotate(360deg); } }
-
-/* Mode dialog */
 .mode-options { display: flex; flex-direction: column; gap: 8px; }
+.zip-banner {
+  padding: 10px 12px; border-radius: var(--radius);
+  background: var(--accent-dim); border: 1px solid var(--accent);
+  color: var(--text); font-size: 12px; margin-bottom: 12px;
+}
 .mode-option {
   display: flex; align-items: flex-start; gap: 10px; padding: 12px;
   border: 1px solid var(--border); border-radius: var(--radius);
@@ -258,43 +500,34 @@ function formatSize(bytes) {
 .mode-content { display: flex; flex-direction: column; gap: 2px; }
 .mode-label { font-size: 13px; font-weight: 600; color: var(--text); }
 .mode-desc { font-size: 11px; color: var(--text-muted); line-height: 1.5; }
-
-.pending-files { display: flex; flex-direction: column; gap: 6px; }
-.pending-label { font-size: 11px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-muted); }
-.pending-file {
-  display: flex; align-items: center; gap: 8px; padding: 6px 10px;
-  background: var(--surface-2); border-radius: var(--radius); font-size: 12px;
+.pending-files { margin: 14px 0 12px; display: flex; flex-direction: column; gap: 10px; }
+.pending-label { font-size: 11px; color: var(--text-sub); font-weight: 600; }
+.pending-file-row { display: flex; flex-direction: column; gap: 8px; }
+.pending-file { display: flex; align-items: center; gap: 8px; padding: 8px 10px; background: var(--surface-2); border: 1px solid var(--border-light); border-radius: var(--radius); }
+.file-icon { font-size: 14px; }
+.file-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; color: var(--text); }
+.file-size { font-size: 11px; color: var(--text-muted); font-family: var(--font-mono); }
+.file-remove { border: none; background: transparent; color: var(--text-muted); cursor: pointer; padding: 0 2px; }
+.file-remove:hover { color: var(--danger); }
+.table-name-row, .form-row { display: flex; flex-direction: column; gap: 6px; }
+.table-name-label, .form-row label { font-size: 11px; color: var(--text-sub); font-weight: 600; }
+.table-name-input, .form-select {
+  width: 100%; padding: 8px 10px; border-radius: var(--radius);
+  border: 1px solid var(--border); background: var(--surface-1); color: var(--text);
 }
-.file-icon { font-size: 14px; flex-shrink: 0; }
-.file-name { flex: 1; color: var(--text); font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.file-size { font-family: var(--font-mono); font-size: 11px; color: var(--text-muted); flex-shrink: 0; }
-.file-remove {
-  width: 18px; height: 18px; background: none; border: none; color: var(--text-muted);
-  cursor: pointer; border-radius: 4px; font-size: 11px; flex-shrink: 0;
-  display: flex; align-items: center; justify-content: center; transition: all 0.15s;
-}
-.file-remove:hover { color: var(--danger); background: var(--danger-dim); }
-
-.pending-file-row { display: flex; flex-direction: column; gap: 4px; }
-.table-name-row {
-  display: flex; align-items: center; gap: 8px; padding: 0 10px 4px;
-}
-.table-name-label {
-  font-size: 11px; color: var(--text-muted); flex-shrink: 0; white-space: nowrap;
-}
-.table-name-input {
-  flex: 1; height: 26px; padding: 0 8px; font-size: 12px;
-  border: 1px solid var(--border); border-radius: 4px;
-  background: var(--surface-1); color: var(--text);
-  outline: none; transition: border-color 0.15s;
-}
-.table-name-input:focus { border-color: var(--accent); }
-.table-name-input::placeholder { color: var(--text-muted); }
-
-.comment-option {
-  display: flex; align-items: center; gap: 8px; padding: 8px 0;
-  cursor: pointer; font-size: 12px;
-}
-.comment-option input[type="checkbox"] { accent-color: var(--accent); }
-.comment-label { color: var(--text-muted); }
+.comment-option { display: flex; align-items: center; gap: 8px; margin-top: 10px; }
+.comment-label { font-size: 12px; color: var(--text-muted); }
+.sheet-preview-summary { margin-bottom: 14px; }
+.sheet-preview-title { font-size: 13px; font-weight: 700; color: var(--text); }
+.sheet-preview-sub { margin-top: 4px; font-size: 11px; color: var(--text-muted); }
+.sheet-group-card { border: 1px solid var(--border); border-radius: var(--radius); padding: 12px; margin-bottom: 12px; background: var(--surface-2); }
+.sheet-group-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
+.sheet-group-check { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--text); }
+.sheet-group-meta { font-size: 11px; color: var(--text-muted); }
+.sheet-group-list { margin-top: 10px; display: flex; flex-direction: column; gap: 6px; }
+.sheet-group-label { font-size: 11px; color: var(--text-sub); font-weight: 600; }
+.sheet-chip-list, .header-chip-list { display: flex; flex-wrap: wrap; gap: 6px; }
+.sheet-chip, .header-chip { padding: 4px 8px; border-radius: 999px; background: var(--surface-1); border: 1px solid var(--border-light); font-size: 11px; color: var(--text); }
+.sheet-table-name-row { margin-top: 10px; }
 </style>
+

@@ -4,8 +4,9 @@ import shutil
 import csv
 import os
 import tempfile
+import zipfile
 from pathlib import Path
-from typing import Optional, List
+from typing import Optional, List, Tuple
 from urllib.parse import quote
 
 from fastapi import APIRouter, UploadFile, File, Form, HTTPException, Depends
@@ -62,13 +63,28 @@ def _preprocess_csv(file_path: Path, comment_char: str = "#"):
 def _read_file_as_csv_path(file: UploadFile, user_id: str) -> Path:
     """Save uploaded file to local storage, converting xlsx to csv if needed.
     For CSV files, detect encoding and re-encode as UTF-8."""
+    csv_filename, csv_bytes = _normalize_to_csv_bytes(file.filename, file.file.read())
     storage = get_storage()
-    content = file.file.read()
-    filename = file.filename
+    storage.save(user_id, csv_filename, csv_bytes)
+    return storage.get_local_path(user_id, csv_filename)
 
-    if filename.endswith(".xlsx"):
+
+def _save_local_file_as_csv_path(local_path: Path, save_as_filename: str, user_id: str) -> Path:
+    """Same as _read_file_as_csv_path but reads from a local extracted file (e.g. from a zip).
+    `save_as_filename` is the name used for storage — pass a path-unique name to avoid
+    collisions when multiple files in a zip share the same basename."""
+    csv_filename, csv_bytes = _normalize_to_csv_bytes(save_as_filename, local_path.read_bytes())
+    storage = get_storage()
+    storage.save(user_id, csv_filename, csv_bytes)
+    return storage.get_local_path(user_id, csv_filename)
+
+
+def _normalize_to_csv_bytes(filename: str, raw: bytes) -> Tuple[str, bytes]:
+    """Convert xlsx bytes to UTF-8 CSV bytes; for CSV input, re-encode to UTF-8.
+    Returns (final_filename, utf8_bytes)."""
+    if filename.lower().endswith(".xlsx"):
         import openpyxl
-        wb = openpyxl.load_workbook(io.BytesIO(content), read_only=True)
+        wb = openpyxl.load_workbook(io.BytesIO(raw), read_only=True)
         csv_filename = Path(filename).stem + ".csv"
         output = io.StringIO()
         writer = csv.writer(output)
@@ -99,21 +115,86 @@ def _read_file_as_csv_path(file: UploadFile, user_id: str) -> Path:
                 writer.writerow(row)
 
         wb.close()
-        content = output.getvalue().encode("utf-8")
-        filename = csv_filename
-    else:
-        # CSV: detect encoding and convert to UTF-8
-        text = _detect_and_decode(content)
-        content = text.encode("utf-8")
+        return csv_filename, output.getvalue().encode("utf-8")
 
-    storage.save(user_id, filename, content)
-    return storage.get_local_path(user_id, filename)
+    # CSV: detect encoding and convert to UTF-8
+    text = _detect_and_decode(raw)
+    return filename, text.encode("utf-8")
 
 
 def _duckdb_read_csv(conn, save_path: Path, table_name: str):
     """Create a table from CSV using DuckDB read_csv_auto with proper path escaping."""
     path_str = str(save_path.resolve()).replace("'", "''")
     conn.execute(f"""CREATE TABLE "{table_name}" AS SELECT * FROM read_csv_auto('{path_str}', header=true)""")
+
+
+# ===== ZIP HELPERS =====
+_ZIP_ALLOWED_EXTS = (".csv", ".xlsx")
+_ZIP_SKIP_NAMES = {".DS_Store"}
+_ZIP_SKIP_PREFIXES = ("__MACOSX/",)
+
+
+def _safe_extract_zip(zip_bytes: bytes, dest_dir: Path) -> List[Tuple[str, Path]]:
+    """Extract a zip into dest_dir with zip-slip protection and content validation.
+    Returns [(relative_path_in_zip, absolute_extracted_path), ...] sorted by relative_path.
+    Raises HTTPException(400) if any file inside is not csv/xlsx (excluding macOS metadata)."""
+    try:
+        zf = zipfile.ZipFile(io.BytesIO(zip_bytes))
+    except zipfile.BadZipFile:
+        raise HTTPException(400, "无法解析 ZIP 文件，可能已损坏")
+
+    bad: List[str] = []
+    items: List[str] = []
+    with zf:
+        for name in zf.namelist():
+            if name.endswith("/"):
+                continue
+            base = Path(name).name
+            if base in _ZIP_SKIP_NAMES or any(name.startswith(p) for p in _ZIP_SKIP_PREFIXES):
+                continue
+            if not name.lower().endswith(_ZIP_ALLOWED_EXTS):
+                bad.append(name)
+                continue
+            items.append(name)
+
+        if bad:
+            preview = ", ".join(bad[:10])
+            suffix = f" 等共 {len(bad)} 个" if len(bad) > 10 else ""
+            raise HTTPException(400, f"ZIP 中包含不支持的文件（仅支持 csv/xlsx）：{preview}{suffix}")
+
+        if not items:
+            raise HTTPException(400, "ZIP 中没有可导入的 csv/xlsx 文件")
+
+        dest_resolved = dest_dir.resolve()
+        results: List[Tuple[str, Path]] = []
+        for name in items:
+            target = (dest_dir / name).resolve()
+            try:
+                target.relative_to(dest_resolved)
+            except ValueError:
+                raise HTTPException(400, f"ZIP 包含非法路径：{name}")
+            target.parent.mkdir(parents=True, exist_ok=True)
+            with zf.open(name) as src, open(target, "wb") as dst:
+                shutil.copyfileobj(src, dst)
+            results.append((name, target))
+
+    results.sort(key=lambda x: x[0])
+    return results
+
+
+def _zip_default_table_name(relative_path: str) -> str:
+    """Convert a zip-internal path to a default table name. dir/sub/a.csv → dir_sub_a."""
+    p = Path(relative_path)
+    parts = [seg for seg in (*p.parent.parts, p.stem) if seg not in (".", "")]
+    return _sanitize_table_name("_".join(parts))
+
+
+def _zip_storage_filename(relative_path: str) -> str:
+    """Build a path-unique filename for storage so that dir1/a.csv and dir2/a.csv don't collide."""
+    p = Path(relative_path)
+    parts = [seg for seg in (*p.parent.parts, p.stem) if seg not in (".", "")]
+    safe_stem = "_".join(parts).replace("-", "_").replace(" ", "_").lower()
+    return f"{safe_stem}{p.suffix.lower()}"
 
 
 # ===== UPLOAD (single file) =====
@@ -224,6 +305,90 @@ async def upload_batch(
             results.append({"filename": file.filename, "success": True, "table": tname, "row_count": row_count})
         except Exception as e:
             results.append({"filename": file.filename, "success": False, "error": str(e)})
+
+    return {"results": results}
+
+
+# ===== ZIP UPLOAD =====
+@router.post("/upload/zip-preview")
+async def upload_zip_preview(
+    file: UploadFile = File(...),
+    user=Depends(require_permission("upload")),
+):
+    """Step 1 of zip upload: extract & validate, return file list for the user to confirm.
+    The zip is NOT persisted — frontend will resend it in /upload/zip-import after confirmation."""
+    if not file.filename.lower().endswith(".zip"):
+        raise HTTPException(400, "只支持 .zip 文件")
+    raw = await file.read()
+    with tempfile.TemporaryDirectory() as td:
+        items = _safe_extract_zip(raw, Path(td))
+        return {
+            "filename": file.filename,
+            "files": [
+                {
+                    "relative_path": rel,
+                    "default_table_name": _zip_default_table_name(rel),
+                    "size": local.stat().st_size,
+                }
+                for rel, local in items
+            ],
+        }
+
+
+@router.post("/upload/zip-import")
+async def upload_zip_import(
+    file: UploadFile = File(...),
+    plan: str = Form(...),
+    user=Depends(require_permission("upload")),
+):
+    """Step 2 of zip upload: re-extract the zip and import each file according to plan.
+    plan JSON shape: {"skip_comments": bool, "items": [{"relative_path", "table_name"}]}.
+    Always uses replace mode (zip-mode does not support append)."""
+    if not file.filename.lower().endswith(".zip"):
+        raise HTTPException(400, "只支持 .zip 文件")
+    try:
+        plan_obj = json.loads(plan)
+    except json.JSONDecodeError:
+        raise HTTPException(400, "plan 不是合法 JSON")
+
+    skip_comments = bool(plan_obj.get("skip_comments", False))
+    items_plan = plan_obj.get("items") or []
+    if not items_plan:
+        raise HTTPException(400, "plan.items 不能为空")
+
+    rel_to_table = {it["relative_path"]: (it.get("table_name") or "").strip() for it in items_plan}
+    raw = await file.read()
+    user_id = user["sub"]
+    conn = get_user_db(user_id)
+    results = []
+
+    with tempfile.TemporaryDirectory() as td:
+        extracted = _safe_extract_zip(raw, Path(td))
+        extracted_map = {rel: local for rel, local in extracted}
+        missing = [rel for rel in rel_to_table if rel not in extracted_map]
+        if missing:
+            raise HTTPException(400, f"以下文件在 ZIP 中不存在：{missing[:5]}")
+
+        for rel, table_name in rel_to_table.items():
+            local_path = extracted_map[rel]
+            try:
+                save_path = _save_local_file_as_csv_path(
+                    local_path, _zip_storage_filename(rel), user_id
+                )
+                if skip_comments:
+                    _preprocess_csv(save_path)
+                tname = table_name or _zip_default_table_name(rel)
+                conn.execute(f'DROP TABLE IF EXISTS "{tname}"')
+                _duckdb_read_csv(conn, save_path, tname)
+                row_count = conn.execute(f'SELECT COUNT(*) FROM "{tname}"').fetchone()[0]
+                cols = conn.execute(f'DESCRIBE "{tname}"').fetchall()
+                results.append({
+                    "relative_path": rel, "success": True, "table": tname,
+                    "row_count": row_count,
+                    "columns": [{"name": c[0], "type": c[1]} for c in cols],
+                })
+            except Exception as e:
+                results.append({"relative_path": rel, "success": False, "error": str(e)})
 
     return {"results": results}
 
