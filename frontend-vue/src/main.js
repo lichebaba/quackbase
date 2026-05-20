@@ -3,9 +3,9 @@ import { createPinia } from 'pinia'
 import router from './router'
 import App from './App.vue'
 
-import './styles/variables.css'
-import './styles/base.css'
-import './styles/components.css'
+import './styles/variables.scss'
+import './styles/base.scss'
+import './styles/components.scss'
 import 'element-plus/dist/index.css'
 import 'element-plus/theme-chalk/dark/css-vars.css'
 

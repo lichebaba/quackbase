@@ -47,23 +47,66 @@ function onSizeChange(e) {
 }
 </script>
 
-<style scoped>
+<style scoped lang="scss">
 .pagination {
-  display: flex; align-items: center; gap: 6px; padding: 10px 16px;
-  border-top: 1px solid var(--border); background: var(--surface); flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 16px;
+  border-top: 1px solid var(--border);
+  background: var(--surface);
+  flex-shrink: 0;
 }
-.pg-btn {
-  width: 32px; height: 32px; background: var(--surface-2); border: 1px solid var(--border);
-  color: var(--text-sub); border-radius: 6px; cursor: pointer; font-size: 14px;
-  display: flex; align-items: center; justify-content: center; transition: all 0.15s;
+
+.pg {
+  &-btn {
+    width: 32px;
+    height: 32px;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    color: var(--text-sub);
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 14px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.15s;
+
+    &:hover:not(:disabled) {
+      border-color: var(--accent);
+      color: var(--accent);
+    }
+
+    &:disabled {
+      opacity: 0.3;
+      cursor: not-allowed;
+    }
+  }
+
+  &-info {
+    font-size: 12px;
+    font-family: var(--font-mono);
+    color: var(--text-sub);
+    padding: 0 8px;
+    flex: 1;
+    text-align: center;
+  }
+
+  &-size {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    color: var(--text-sub);
+    padding: 4px 8px;
+    border-radius: 6px;
+    cursor: pointer;
+
+    &:focus {
+      outline: none;
+      border-color: var(--accent);
+    }
+  }
 }
-.pg-btn:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
-.pg-btn:disabled { opacity: 0.3; cursor: not-allowed; }
-.pg-info { font-size: 12px; font-family: var(--font-mono); color: var(--text-sub); padding: 0 8px; flex: 1; text-align: center; }
-.pg-size {
-  font-family: var(--font-mono); font-size: 12px; background: var(--surface-2);
-  border: 1px solid var(--border); color: var(--text-sub); padding: 4px 8px;
-  border-radius: 6px; cursor: pointer;
-}
-.pg-size:focus { outline: none; border-color: var(--accent); }
 </style>

@@ -115,30 +115,73 @@ onMounted(() => window.addEventListener('open-user-mgmt', onOpen))
 onUnmounted(() => window.removeEventListener('open-user-mgmt', onOpen))
 </script>
 
-<style scoped>
+<style scoped lang="scss">
 .user-mgmt-toolbar { margin-bottom: 14px; }
-.user-table { width: 100%; border-collapse: collapse; font-size: 13px; }
-.user-table th {
-  font-size: 10px; font-weight: 700; letter-spacing: 0.08em;
-  text-transform: uppercase; color: var(--text-muted); padding: 8px 12px;
-  border-bottom: 1px solid var(--border); text-align: left;
+
+.user-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+
+  th {
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--border);
+    text-align: left;
+  }
+
+  td {
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--border);
+    color: var(--text);
+    font-family: var(--font-mono);
+    font-size: 12px;
+  }
+
+  tr:last-child td { border-bottom: none; }
 }
-.user-table td {
-  padding: 10px 12px; border-bottom: 1px solid var(--border);
-  color: var(--text); font-family: var(--font-mono); font-size: 12px;
-}
-.user-table tr:last-child td { border-bottom: none; }
+
 .role-select {
-  font-family: var(--font-mono); font-size: 11px; background: var(--surface-3);
-  border: 1px solid var(--border); color: var(--text); padding: 3px 8px;
-  border-radius: 6px; cursor: pointer;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  background: var(--surface-3);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 3px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+
+  &:focus {
+    outline: none;
+    border-color: var(--accent);
+  }
 }
-.role-select:focus { outline: none; border-color: var(--accent); }
+
 .btn-del-user {
-  background: none; border: 1px solid var(--border); color: var(--text-muted);
-  border-radius: 6px; padding: 3px 10px; font-size: 12px; cursor: pointer;
-  font-family: var(--font-ui); transition: all 0.15s;
+  background: none;
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  border-radius: 6px;
+  padding: 3px 10px;
+  font-size: 12px;
+  cursor: pointer;
+  font-family: var(--font-ui);
+  transition: all 0.15s;
+
+  &:hover {
+    border-color: var(--danger);
+    color: var(--danger);
+    background: var(--danger-dim);
+  }
 }
-.btn-del-user:hover { border-color: var(--danger); color: var(--danger); background: var(--danger-dim); }
-.new-user-form { margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--border); }
+
+.new-user-form {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
 </style>

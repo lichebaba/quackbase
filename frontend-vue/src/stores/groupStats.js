@@ -6,9 +6,11 @@ import { useDataStore } from './data'
 /**
  * 分组统计 store。
  * 复用 data store 的 filters / search，使分组结果与列表展示口径一致。
+ * groupBy 支持 1~2 个字段。
  */
 export const useGroupStatsStore = defineStore('groupStats', () => {
-  const groupBy = ref('')
+  // 1~2 个分组字段；空数组表示未选
+  const groupBy = ref([])
   // 每个聚合项：{ op: 'COUNT'|'SUM'|'AVG'|'MIN'|'MAX', col: string, alias: string }
   const aggs = ref([{ op: 'COUNT', col: '*', alias: 'count' }])
 
@@ -38,7 +40,7 @@ export const useGroupStatsStore = defineStore('groupStats', () => {
   }
 
   function reset() {
-    groupBy.value = ''
+    groupBy.value = []
     aggs.value = [{ op: 'COUNT', col: '*', alias: 'count' }]
     columns.value = []
     rows.value = []
@@ -49,6 +51,30 @@ export const useGroupStatsStore = defineStore('groupStats', () => {
     sortDir.value = 'desc'
     lastError.value = ''
     lastCountKey = null
+  }
+
+  /** 设置第 idx 个分组字段（idx ∈ {0,1}）；
+   *  传空字符串：idx=0 清空全部，idx=1 只清除次级；
+   *  设主分组与原次级相同时自动清次级。 */
+  function setGroupByAt(idx, colName) {
+    const val = (colName || '').trim()
+    const cur = [...groupBy.value]
+    if (idx === 0) {
+      if (!val) {
+        groupBy.value = []
+        return
+      }
+      const second = cur[1] && cur[1] !== val ? cur[1] : null
+      groupBy.value = second ? [val, second] : [val]
+    } else {
+      if (!cur[0]) return
+      if (!val) {
+        groupBy.value = [cur[0]]
+        return
+      }
+      if (val === cur[0]) return
+      groupBy.value = [cur[0], val]
+    }
   }
 
   function addAgg() {
@@ -81,8 +107,12 @@ export const useGroupStatsStore = defineStore('groupStats', () => {
 
   async function loadStats(tableName) {
     if (!tableName) return
-    if (!groupBy.value) {
+    if (!groupBy.value || groupBy.value.length === 0) {
       lastError.value = '请先选择分组字段'
+      return
+    }
+    if (groupBy.value.length > 2) {
+      lastError.value = '最多支持 2 个分组字段'
       return
     }
     const dataStore = useDataStore()
@@ -106,7 +136,7 @@ export const useGroupStatsStore = defineStore('groupStats', () => {
     }
 
     const params = new URLSearchParams({
-      group_by: groupBy.value,
+      group_by: JSON.stringify(groupBy.value),
       aggs: JSON.stringify(validAggs),
       page: page.value,
       page_size: pageSize.value,
@@ -149,6 +179,6 @@ export const useGroupStatsStore = defineStore('groupStats', () => {
     groupBy, aggs,
     columns, rows, total, page, pageSize, totalPages, sortCol, sortDir,
     loading, lastError, hasResult,
-    reset, addAgg, removeAgg, setSort, goToPage, setPageSize, loadStats,
+    reset, addAgg, removeAgg, setSort, setGroupByAt, goToPage, setPageSize, loadStats,
   }
 })

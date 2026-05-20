@@ -3,6 +3,7 @@
     <AppSidebar />
     <main class="main">
       <AppTopbar />
+      <ViewModeBar />
       <FilterBar />
       <SearchBar />
 
@@ -56,6 +57,7 @@ import { useDataStore } from '../stores/data'
 
 import AppSidebar from '../components/layout/AppSidebar.vue'
 import AppTopbar from '../components/layout/AppTopbar.vue'
+import ViewModeBar from '../components/data/ViewModeBar.vue'
 import FilterBar from '../components/data/FilterBar.vue'
 import SearchBar from '../components/data/SearchBar.vue'
 import DataTable from '../components/data/DataTable.vue'
@@ -73,24 +75,83 @@ onMounted(() => {
 })
 </script>
 
-<style scoped>
-.dashboard { display: flex; height: 100vh; overflow: hidden; }
-.main { flex: 1; display: flex; flex-direction: column; overflow: hidden; background: var(--bg); }
+<style scoped lang="scss">
+.dashboard {
+  display: flex;
+  height: 100vh;
+  overflow: hidden;
+}
+
+.main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--bg);
+}
 
 .welcome {
-  flex: 1; display: flex; flex-direction: column;
-  align-items: center; justify-content: center; padding: 40px; gap: 20px;
-}
-.welcome-art svg { width: 200px; height: 160px; opacity: 0.7; }
-.welcome-title { font-size: 26px; font-weight: 800; letter-spacing: -0.02em; text-align: center; }
-.welcome-desc { font-size: 14px; color: var(--text-sub); text-align: center; max-width: 380px; line-height: 1.7; }
-.welcome-steps { display: flex; gap: 12px; flex-wrap: wrap; justify-content: center; margin-top: 8px; }
-.step {
-  display: flex; align-items: center; gap: 8px;
-  background: var(--surface-2); border: 1px solid var(--border);
-  border-radius: var(--radius); padding: 10px 16px; font-size: 13px; color: var(--text-sub);
-}
-.step-num { font-family: var(--font-mono); font-size: 11px; color: var(--accent); font-weight: 500; }
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 40px;
+  gap: 20px;
 
-.table-area { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+  &-art svg {
+    width: 200px;
+    height: 160px;
+    opacity: 0.7;
+  }
+
+  &-title {
+    font-size: 26px;
+    font-weight: 800;
+    letter-spacing: -0.02em;
+    text-align: center;
+  }
+
+  &-desc {
+    font-size: 14px;
+    color: var(--text-sub);
+    text-align: center;
+    max-width: 380px;
+    line-height: 1.7;
+  }
+
+  &-steps {
+    display: flex;
+    gap: 12px;
+    flex-wrap: wrap;
+    justify-content: center;
+    margin-top: 8px;
+  }
+}
+
+.step {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 10px 16px;
+  font-size: 13px;
+  color: var(--text-sub);
+
+  &-num {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--accent);
+    font-weight: 500;
+  }
+}
+
+.table-area {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
 </style>

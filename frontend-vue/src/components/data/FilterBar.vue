@@ -43,26 +43,100 @@ function editFilter(idx) {
 }
 </script>
 
-<style scoped>
-.filter-bar { background: var(--surface); border-bottom: 1px solid var(--border); padding: 10px 20px; flex-shrink: 0; }
-.filter-bar-minimal { padding: 8px 20px; }
-.filter-bar-inner { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-.filter-label { font-size: 11px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-muted); white-space: nowrap; }
-.filter-chips { display: flex; flex-wrap: wrap; gap: 6px; flex: 1; }
+<style scoped lang="scss">
+.filter-bar {
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  padding: 10px 20px;
+  flex-shrink: 0;
+
+  &-minimal { padding: 8px 20px; }
+
+  &-inner {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+}
+
+.filter-label {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.filter-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  flex: 1;
+}
+
 .filter-chip {
-  display: flex; align-items: center; gap: 6px;
-  background: var(--accent-dim); border: 1px solid rgba(245,200,66,0.25);
-  color: var(--accent); font-size: 12px; font-family: var(--font-mono);
-  padding: 3px 4px 3px 10px; border-radius: 20px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--accent-dim);
+  border: 1px solid rgba(245,200,66,0.25);
+  color: var(--accent);
+  font-size: 12px;
+  font-family: var(--font-mono);
+  padding: 3px 4px 3px 10px;
+  border-radius: 20px;
+
+  &-label {
+    cursor: pointer;
+    user-select: none;
+    transition: opacity 0.15s;
+    padding: 1px 4px 1px 0;
+
+    &:hover {
+      opacity: 0.8;
+      text-decoration: underline;
+      text-decoration-style: dashed;
+      text-underline-offset: 3px;
+    }
+  }
+
+  &-remove {
+    background: none;
+    border: none;
+    color: var(--accent);
+    cursor: pointer;
+    font-size: 12px;
+    line-height: 1;
+    padding: 2px 6px;
+    border-radius: 50%;
+    opacity: 0.7;
+    transition: all 0.15s;
+
+    &:hover {
+      opacity: 1;
+      background: rgba(245,200,66,0.15);
+    }
+  }
 }
-.filter-chip-label { cursor: pointer; user-select: none; transition: opacity 0.15s; padding: 1px 4px 1px 0; }
-.filter-chip-label:hover { opacity: 0.8; text-decoration: underline; text-decoration-style: dashed; text-underline-offset: 3px; }
-.filter-chip-remove { background: none; border: none; color: var(--accent); cursor: pointer; font-size: 12px; line-height: 1; padding: 2px 6px; border-radius: 50%; opacity: 0.7; transition: all 0.15s; }
-.filter-chip-remove:hover { opacity: 1; background: rgba(245,200,66,0.15); }
+
 .btn-add-filter {
-  font-family: var(--font-ui); font-size: 12px; font-weight: 600;
-  background: none; border: 1px dashed var(--border-light); color: var(--text-sub);
-  padding: 4px 12px; border-radius: 20px; cursor: pointer; white-space: nowrap; transition: all 0.15s;
+  font-family: var(--font-ui);
+  font-size: 12px;
+  font-weight: 600;
+  background: none;
+  border: 1px dashed var(--border-light);
+  color: var(--text-sub);
+  padding: 4px 12px;
+  border-radius: 20px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.15s;
+
+  &:hover {
+    border-color: var(--accent);
+    color: var(--accent);
+  }
 }
-.btn-add-filter:hover { border-color: var(--accent); color: var(--accent); }
 </style>

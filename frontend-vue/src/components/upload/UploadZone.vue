@@ -7,7 +7,10 @@
   </div>
 
   <ModalBase :show="showModeDialog" title="选择导入方式" @close="cancelUpload">
-    <div v-if="isZipMode" class="zip-banner">📦 来自 ZIP：{{ zipFilename }}（{{ pendingFiles.length }} 个文件）</div>
+    <div v-if="isZipMode" class="zip-banner">
+      📦 来自 ZIP：{{ zipFilename }}
+      <template v-if="pendingFiles.length > 0">（{{ pendingFiles.length }} 个文件）</template>
+    </div>
     <div v-if="!isZipMode" class="mode-options">
       <label class="mode-option" :class="{ active: uploadMode === 'replace' }">
         <input type="radio" v-model="uploadMode" value="replace" />
@@ -33,7 +36,7 @@
         </option>
       </select>
     </div>
-    <div class="pending-files">
+    <div v-if="pendingFiles.length > 0" class="pending-files">
       <div class="pending-label">待导入文件（{{ pendingFiles.length }} 个）</div>
       <div v-for="(f, i) in pendingFiles" :key="i" class="pending-file-row">
         <div class="pending-file">
@@ -48,14 +51,14 @@
         </div>
       </div>
     </div>
-    <label class="comment-option">
+    <label v-if="pendingFiles.length > 0" class="comment-option">
       <input type="checkbox" v-model="skipComments" />
       <span class="comment-label">忽略注释行（以 # 开头）</span>
     </label>
     <div v-if="importing" class="import-loading">
       <div class="import-spinner"></div>
       <div class="import-loading-text">{{ importProgressText }}</div>
-      <div class="import-progress-bar"><div class="import-progress-fill" :style="{ width: importProgress + '%' }"></div></div>
+      <div v-if="importProgress > 0" class="import-progress-bar"><div class="import-progress-fill" :style="{ width: importProgress + '%' }"></div></div>
     </div>
     <template #footer>
       <button class="btn btn-ghost" @click="cancelUpload" :disabled="importing">取消</button>
@@ -209,6 +212,14 @@ function openModeDialog(files) {
 }
 
 async function openZipPreview(zipFile) {
+  // 先把弹框立刻打开，显示加载占位；避免后端解析期间用户无反馈
+  pendingFiles.value = []
+  originalZipFile.value = zipFile
+  zipFilename.value = zipFile.name
+  isZipMode.value = true
+  uploadMode.value = 'replace'
+  targetTable.value = ''
+  showModeDialog.value = true
   importing.value = true
   importProgressText.value = '正在解析 ZIP...'
   try {
@@ -218,6 +229,7 @@ async function openZipPreview(zipFile) {
     const data = await res.json()
     if (!data.files || data.files.length === 0) {
       toast.add('ZIP 中没有可导入的文件', 'error')
+      cancelUpload()
       return
     }
     pendingFiles.value = data.files.map(f => ({
@@ -225,14 +237,10 @@ async function openZipPreview(zipFile) {
       tableName: f.default_table_name,
       size: f.size,
     }))
-    originalZipFile.value = zipFile
     zipFilename.value = data.filename
-    isZipMode.value = true
-    uploadMode.value = 'replace'
-    targetTable.value = ''
-    showModeDialog.value = true
   } catch (e) {
     toast.add(e.message, 'error')
+    cancelUpload()
   } finally {
     importing.value = false
     importProgressText.value = ''
@@ -450,91 +458,355 @@ function formatSize(bytes) {
 }
 </script>
 
-<style scoped>
-.upload-zone {
-  border: 1.5px dashed var(--border-light); border-radius: var(--radius);
-  padding: 18px 12px; text-align: center; cursor: pointer;
-  transition: all 0.2s; background: var(--surface-2);
+<style scoped lang="scss">
+.upload {
+  &-zone {
+    border: 1.5px dashed var(--border-light);
+    border-radius: var(--radius);
+    padding: 18px 12px;
+    text-align: center;
+    cursor: pointer;
+    transition: all 0.2s;
+    background: var(--surface-2);
+
+    &:hover, &.dragging {
+      border-color: var(--accent);
+      background: var(--accent-dim);
+    }
+  }
+
+  &-icon {
+    font-size: 22px;
+    margin-bottom: 8px;
+    color: var(--accent);
+  }
+
+  &-hint {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text);
+    margin-bottom: 3px;
+  }
+
+  &-sub {
+    font-size: 11px;
+    color: var(--text-muted);
+  }
+
+  &-progress {
+    margin-top: 10px;
+
+    span {
+      font-size: 11px;
+      color: var(--text-sub);
+      font-family: var(--font-mono);
+    }
+  }
 }
-.upload-zone:hover, .upload-zone.dragging { border-color: var(--accent); background: var(--accent-dim); }
-.upload-icon { font-size: 22px; margin-bottom: 8px; color: var(--accent); }
-.upload-hint { font-size: 13px; font-weight: 600; color: var(--text); margin-bottom: 3px; }
-.upload-sub { font-size: 11px; color: var(--text-muted); }
-.upload-progress { margin-top: 10px; }
-.progress-bar { height: 3px; background: var(--surface-3); border-radius: 2px; overflow: hidden; margin-bottom: 6px; }
-.progress-fill { height: 100%; background: var(--accent); transition: width 0.3s ease; border-radius: 2px; }
-.upload-progress span { font-size: 11px; color: var(--text-sub); font-family: var(--font-mono); }
-.import-loading {
-  display: flex; flex-direction: column; align-items: center; gap: 10px;
-  padding: 16px 0 8px;
+
+.progress {
+  &-bar {
+    height: 3px;
+    background: var(--surface-3);
+    border-radius: 2px;
+    overflow: hidden;
+    margin-bottom: 6px;
+  }
+
+  &-fill {
+    height: 100%;
+    background: var(--accent);
+    transition: width 0.3s ease;
+    border-radius: 2px;
+  }
 }
-.import-spinner {
-  width: 28px; height: 28px; border: 3px solid var(--border-light);
-  border-top-color: var(--accent); border-radius: 50%;
-  animation: spin 0.8s linear infinite;
+
+.import {
+  &-loading {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+    padding: 16px 0 8px;
+
+    &-text {
+      font-size: 12px;
+      color: var(--text-muted);
+      text-align: center;
+    }
+  }
+
+  &-spinner {
+    width: 28px;
+    height: 28px;
+    border: 3px solid var(--border-light);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+  }
+
+  &-progress {
+    &-bar {
+      width: 100%;
+      height: 4px;
+      background: var(--surface-3);
+      border-radius: 2px;
+      overflow: hidden;
+    }
+
+    &-fill {
+      height: 100%;
+      background: var(--accent);
+      transition: width 0.3s ease;
+      border-radius: 2px;
+    }
+  }
 }
-.import-loading-text {
-  font-size: 12px; color: var(--text-muted); text-align: center;
-}
-.import-progress-bar {
-  width: 100%; height: 4px; background: var(--surface-3);
-  border-radius: 2px; overflow: hidden;
-}
-.import-progress-fill {
-  height: 100%; background: var(--accent); transition: width 0.3s ease; border-radius: 2px;
-}
+
 .btn-loading-spinner {
-  display: inline-block; width: 12px; height: 12px;
-  border: 2px solid rgba(255,255,255,0.3); border-top-color: #fff;
-  border-radius: 50%; animation: spin 0.8s linear infinite;
-  margin-right: 6px; vertical-align: middle;
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border: 2px solid rgba(255,255,255,0.3);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+  margin-right: 6px;
+  vertical-align: middle;
 }
+
 @keyframes spin { to { transform: rotate(360deg); } }
-.mode-options { display: flex; flex-direction: column; gap: 8px; }
+
+.mode {
+  &-options {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  &-option {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    padding: 12px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    cursor: pointer;
+    transition: all 0.15s;
+
+    &:hover { border-color: var(--border-light); }
+
+    &.active {
+      border-color: var(--accent);
+      background: var(--accent-dim);
+    }
+
+    input[type="radio"] {
+      margin-top: 2px;
+      accent-color: var(--accent);
+    }
+  }
+
+  &-content {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  &-label {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text);
+  }
+
+  &-desc {
+    font-size: 11px;
+    color: var(--text-muted);
+    line-height: 1.5;
+  }
+}
+
 .zip-banner {
-  padding: 10px 12px; border-radius: var(--radius);
-  background: var(--accent-dim); border: 1px solid var(--accent);
-  color: var(--text); font-size: 12px; margin-bottom: 12px;
+  padding: 10px 12px;
+  border-radius: var(--radius);
+  background: var(--accent-dim);
+  border: 1px solid var(--accent);
+  color: var(--text);
+  font-size: 12px;
+  margin-bottom: 12px;
 }
-.mode-option {
-  display: flex; align-items: flex-start; gap: 10px; padding: 12px;
-  border: 1px solid var(--border); border-radius: var(--radius);
-  cursor: pointer; transition: all 0.15s;
+
+.pending {
+  &-files {
+    margin: 14px 0 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  &-label {
+    font-size: 11px;
+    color: var(--text-sub);
+    font-weight: 600;
+  }
+
+  &-file-row {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  &-file {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 10px;
+    background: var(--surface-2);
+    border: 1px solid var(--border-light);
+    border-radius: var(--radius);
+  }
 }
-.mode-option:hover { border-color: var(--border-light); }
-.mode-option.active { border-color: var(--accent); background: var(--accent-dim); }
-.mode-option input[type="radio"] { margin-top: 2px; accent-color: var(--accent); }
-.mode-content { display: flex; flex-direction: column; gap: 2px; }
-.mode-label { font-size: 13px; font-weight: 600; color: var(--text); }
-.mode-desc { font-size: 11px; color: var(--text-muted); line-height: 1.5; }
-.pending-files { margin: 14px 0 12px; display: flex; flex-direction: column; gap: 10px; }
-.pending-label { font-size: 11px; color: var(--text-sub); font-weight: 600; }
-.pending-file-row { display: flex; flex-direction: column; gap: 8px; }
-.pending-file { display: flex; align-items: center; gap: 8px; padding: 8px 10px; background: var(--surface-2); border: 1px solid var(--border-light); border-radius: var(--radius); }
-.file-icon { font-size: 14px; }
-.file-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; color: var(--text); }
-.file-size { font-size: 11px; color: var(--text-muted); font-family: var(--font-mono); }
-.file-remove { border: none; background: transparent; color: var(--text-muted); cursor: pointer; padding: 0 2px; }
-.file-remove:hover { color: var(--danger); }
-.table-name-row, .form-row { display: flex; flex-direction: column; gap: 6px; }
-.table-name-label, .form-row label { font-size: 11px; color: var(--text-sub); font-weight: 600; }
+
+.file {
+  &-icon { font-size: 14px; }
+
+  &-name {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 12px;
+    color: var(--text);
+  }
+
+  &-size {
+    font-size: 11px;
+    color: var(--text-muted);
+    font-family: var(--font-mono);
+  }
+
+  &-remove {
+    border: none;
+    background: transparent;
+    color: var(--text-muted);
+    cursor: pointer;
+    padding: 0 2px;
+
+    &:hover { color: var(--danger); }
+  }
+}
+
+.table-name-row, .form-row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.table-name-label, .form-row label {
+  font-size: 11px;
+  color: var(--text-sub);
+  font-weight: 600;
+}
+
 .table-name-input, .form-select {
-  width: 100%; padding: 8px 10px; border-radius: var(--radius);
-  border: 1px solid var(--border); background: var(--surface-1); color: var(--text);
+  width: 100%;
+  padding: 8px 10px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: var(--surface-1);
+  color: var(--text);
 }
-.comment-option { display: flex; align-items: center; gap: 8px; margin-top: 10px; }
-.comment-label { font-size: 12px; color: var(--text-muted); }
-.sheet-preview-summary { margin-bottom: 14px; }
-.sheet-preview-title { font-size: 13px; font-weight: 700; color: var(--text); }
-.sheet-preview-sub { margin-top: 4px; font-size: 11px; color: var(--text-muted); }
-.sheet-group-card { border: 1px solid var(--border); border-radius: var(--radius); padding: 12px; margin-bottom: 12px; background: var(--surface-2); }
-.sheet-group-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
-.sheet-group-check { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--text); }
-.sheet-group-meta { font-size: 11px; color: var(--text-muted); }
-.sheet-group-list { margin-top: 10px; display: flex; flex-direction: column; gap: 6px; }
-.sheet-group-label { font-size: 11px; color: var(--text-sub); font-weight: 600; }
-.sheet-chip-list, .header-chip-list { display: flex; flex-wrap: wrap; gap: 6px; }
-.sheet-chip, .header-chip { padding: 4px 8px; border-radius: 999px; background: var(--surface-1); border: 1px solid var(--border-light); font-size: 11px; color: var(--text); }
-.sheet-table-name-row { margin-top: 10px; }
+
+.comment-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.comment-label {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.sheet-preview {
+  &-summary { margin-bottom: 14px; }
+
+  &-title {
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--text);
+  }
+
+  &-sub {
+    margin-top: 4px;
+    font-size: 11px;
+    color: var(--text-muted);
+  }
+}
+
+.sheet-group {
+  &-card {
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 12px;
+    margin-bottom: 12px;
+    background: var(--surface-2);
+  }
+
+  &-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 10px;
+  }
+
+  &-check {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 12px;
+    color: var(--text);
+  }
+
+  &-meta {
+    font-size: 11px;
+    color: var(--text-muted);
+  }
+
+  &-list {
+    margin-top: 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  &-label {
+    font-size: 11px;
+    color: var(--text-sub);
+    font-weight: 600;
+  }
+}
+
+.sheet-chip-list, .header-chip-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.sheet-chip, .header-chip {
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: var(--surface-1);
+  border: 1px solid var(--border-light);
+  font-size: 11px;
+  color: var(--text);
+}
+
+.sheet-table-name-row {
+  margin-top: 10px;
+}
 </style>
 

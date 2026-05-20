@@ -228,78 +228,113 @@ onMounted(() => window.addEventListener('open-filter-modal', onOpen))
 onUnmounted(() => window.removeEventListener('open-filter-modal', onOpen))
 </script>
 
-<style scoped>
+<style scoped lang="scss">
 .value-input { width: 100%; }
 </style>
 
-<style>
+<style lang="scss">
 /* 让 element-plus DatePicker 的输入框 / 弹层贴合应用的暗色主题 —— 必须用全局样式，
    因为 popper 通过 teleport 渲染到 body 上 */
-.el-date-editor .el-input__wrapper,
-.el-range-editor.el-input__wrapper {
-  background: var(--surface-2) !important;
-  border: 1px solid var(--border) !important;
-  box-shadow: none !important;
-  color: var(--text) !important;
-}
-.el-date-editor .el-input__wrapper.is-focus,
-.el-range-editor.el-input__wrapper.is-focus,
-.el-date-editor .el-input__wrapper:hover,
-.el-range-editor.el-input__wrapper:hover {
-  border-color: var(--accent) !important;
-  box-shadow: none !important;
-}
-.el-date-editor .el-input__inner,
-.el-range-editor .el-range-input {
-  color: var(--text) !important;
-  font-family: var(--font-mono) !important;
-}
-.el-date-editor .el-input__inner::placeholder,
-.el-range-editor .el-range-input::placeholder {
-  color: var(--text-muted) !important;
-}
-.el-range-editor .el-range-separator { color: var(--text-sub) !important; }
-.el-date-editor .el-input__prefix,
-.el-range-editor .el-range__icon,
-.el-range-editor .el-range__close-icon,
-.el-date-editor .el-input__suffix { color: var(--text-muted) !important; }
+.el-date-editor, .el-range-editor {
+  .el-input__wrapper {
+    background: var(--surface-2) !important;
+    border: 1px solid var(--border) !important;
+    box-shadow: none !important;
+    color: var(--text) !important;
 
-.qb-date-popper.el-popper {
-  background: var(--surface) !important;
-  border: 1px solid var(--border) !important;
-  color: var(--text) !important;
+    &.is-focus, &:hover {
+      border-color: var(--accent) !important;
+      box-shadow: none !important;
+    }
+  }
 }
-.qb-date-popper .el-picker-panel,
-.qb-date-popper .el-date-picker,
-.qb-date-popper .el-date-range-picker {
-  background: var(--surface) !important;
-  color: var(--text) !important;
-  border: none !important;
+
+.el-date-editor {
+  .el-input__inner {
+    color: var(--text) !important;
+    font-family: var(--font-mono) !important;
+
+    &::placeholder { color: var(--text-muted) !important; }
+  }
+
+  .el-input__prefix,
+  .el-input__suffix { color: var(--text-muted) !important; }
 }
-.qb-date-popper .el-picker-panel__icon-btn,
-.qb-date-popper .el-date-picker__header-label,
-.qb-date-popper .el-date-table th,
-.qb-date-popper .el-date-range-picker__header { color: var(--text-sub) !important; }
-.qb-date-popper .el-date-table td.available .el-date-table-cell { color: var(--text) !important; }
-.qb-date-popper .el-date-table td.next-month .el-date-table-cell,
-.qb-date-popper .el-date-table td.prev-month .el-date-table-cell { color: var(--text-muted) !important; }
-.qb-date-popper .el-date-table td.today .el-date-table-cell__text { color: var(--accent) !important; font-weight: 700; }
-.qb-date-popper .el-date-table td.current:not(.disabled) .el-date-table-cell__text,
-.qb-date-popper .el-date-table td.start-date .el-date-table-cell__text,
-.qb-date-popper .el-date-table td.end-date .el-date-table-cell__text {
-  background: var(--accent) !important; color: #000 !important;
+
+.el-range-editor {
+  .el-range-input {
+    color: var(--text) !important;
+    font-family: var(--font-mono) !important;
+
+    &::placeholder { color: var(--text-muted) !important; }
+  }
+
+  .el-range-separator { color: var(--text-sub) !important; }
+  .el-range__icon,
+  .el-range__close-icon { color: var(--text-muted) !important; }
 }
-.qb-date-popper .el-date-table td.in-range .el-date-table-cell { background: var(--accent-dim) !important; }
-.qb-date-popper .el-picker-panel__footer { background: var(--surface) !important; border-top: 1px solid var(--border) !important; }
-.qb-date-popper .el-button.is-plain {
-  background: var(--surface-2) !important;
-  border: 1px solid var(--border) !important;
-  color: var(--text-sub) !important;
+
+.qb-date-popper {
+  &.el-popper {
+    background: var(--surface) !important;
+    border: 1px solid var(--border) !important;
+    color: var(--text) !important;
+  }
+
+  .el-picker-panel,
+  .el-date-picker,
+  .el-date-range-picker {
+    background: var(--surface) !important;
+    color: var(--text) !important;
+    border: none !important;
+  }
+
+  .el-picker-panel__icon-btn,
+  .el-date-picker__header-label,
+  .el-date-table th,
+  .el-date-range-picker__header { color: var(--text-sub) !important; }
+
+  .el-date-table td {
+    &.available .el-date-table-cell { color: var(--text) !important; }
+    &.next-month .el-date-table-cell,
+    &.prev-month .el-date-table-cell { color: var(--text-muted) !important; }
+
+    &.today .el-date-table-cell__text {
+      color: var(--accent) !important;
+      font-weight: 700;
+    }
+
+    &.current:not(.disabled) .el-date-table-cell__text,
+    &.start-date .el-date-table-cell__text,
+    &.end-date .el-date-table-cell__text {
+      background: var(--accent) !important;
+      color: #000 !important;
+    }
+
+    &.in-range .el-date-table-cell { background: var(--accent-dim) !important; }
+  }
+
+  .el-picker-panel__footer {
+    background: var(--surface) !important;
+    border-top: 1px solid var(--border) !important;
+  }
+
+  .el-button {
+    &.is-plain {
+      background: var(--surface-2) !important;
+      border: 1px solid var(--border) !important;
+      color: var(--text-sub) !important;
+    }
+
+    &--primary {
+      background: var(--accent) !important;
+      border-color: var(--accent) !important;
+      color: #000 !important;
+    }
+  }
+
+  .el-time-spinner__item.is-active:not(.is-disabled) {
+    color: var(--accent) !important;
+  }
 }
-.qb-date-popper .el-button--primary {
-  background: var(--accent) !important;
-  border-color: var(--accent) !important;
-  color: #000 !important;
-}
-.qb-date-popper .el-time-spinner__item.is-active:not(.is-disabled) { color: var(--accent) !important; }
 </style>

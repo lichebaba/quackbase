@@ -5,10 +5,6 @@
       <div class="breadcrumb">
         <span>{{ tablesStore.currentTable || '— 请选择数据表 —' }}</span>
       </div>
-      <div v-if="tablesStore.currentTable" class="view-switch">
-        <button class="view-tab" :class="{ active: dataStore.viewMode !== 'group' }" @click="dataStore.setViewMode('data', tablesStore.currentTable)">📋 数据</button>
-        <button class="view-tab" :class="{ active: dataStore.viewMode === 'group' }" @click="dataStore.setViewMode('group', tablesStore.currentTable)">📊 分组统计</button>
-      </div>
     </div>
     <div class="topbar-right">
       <span v-if="tablesStore.currentTable && isFiltered" class="row-count">筛选 {{ dataStore.total.toLocaleString() }} / 共 {{ realTotal.toLocaleString() }} 行</span>
@@ -112,69 +108,142 @@ onMounted(() => document.addEventListener('click', onClickOutside))
 onUnmounted(() => document.removeEventListener('click', onClickOutside))
 </script>
 
-<style scoped>
+<style scoped lang="scss">
 .topbar {
-  height: var(--topbar-h); border-bottom: 1px solid var(--border);
-  display: flex; align-items: center; justify-content: space-between;
-  padding: 0 20px; background: var(--surface); flex-shrink: 0;
+  height: var(--topbar-h);
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 20px;
+  background: var(--surface);
+  flex-shrink: 0;
+
+  &-left {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+
+  &-right {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
 }
-.topbar-left { display: flex; align-items: center; gap: 12px; }
-.view-switch {
-  display: flex; gap: 2px; background: var(--surface-2);
-  border: 1px solid var(--border); border-radius: 999px; padding: 2px;
-  margin-left: 8px;
-}
-.view-tab {
-  background: none; border: none; color: var(--text-sub);
-  font-family: var(--font-ui); font-size: 12px; font-weight: 600;
-  padding: 4px 12px; border-radius: 999px; cursor: pointer;
-  transition: all 0.15s;
-}
-.view-tab:hover { color: var(--text); }
-.view-tab.active { background: var(--accent); color: #000; }
+
 .sidebar-toggle {
-  background: none; border: 1px solid var(--border); color: var(--text-sub);
-  width: 32px; height: 32px; border-radius: 6px; cursor: pointer;
-  font-size: 14px; display: flex; align-items: center; justify-content: center;
+  background: none;
+  border: 1px solid var(--border);
+  color: var(--text-sub);
+  width: 32px;
+  height: 32px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   transition: all 0.15s;
+
+  &:hover {
+    border-color: var(--accent);
+    color: var(--accent);
+  }
 }
-.sidebar-toggle:hover { border-color: var(--accent); color: var(--accent); }
-.breadcrumb { font-size: 15px; font-weight: 700; color: var(--text-sub); letter-spacing: 0.01em; }
-.breadcrumb span { color: var(--text); }
-.topbar-right { display: flex; align-items: center; gap: 10px; }
+
+.breadcrumb {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text-sub);
+  letter-spacing: 0.01em;
+
+  span { color: var(--text); }
+}
+
 .row-count {
-  font-size: 12px; font-family: var(--font-mono); color: var(--text-muted);
-  background: var(--surface-2); padding: 3px 10px; border-radius: 20px;
+  font-size: 12px;
+  font-family: var(--font-mono);
+  color: var(--text-muted);
+  background: var(--surface-2);
+  padding: 3px 10px;
+  border-radius: 20px;
   border: 1px solid var(--border);
 }
-.export-dropdown { position: relative; }
-.export-menu {
-  position: absolute; right: 0; top: 100%; margin-top: 4px;
-  background: var(--surface); border: 1px solid var(--border);
-  border-radius: var(--radius); box-shadow: var(--shadow);
-  min-width: 160px; z-index: 50; overflow: hidden;
+
+.export {
+  &-dropdown { position: relative; }
+
+  &-menu {
+    position: absolute;
+    right: 0;
+    top: 100%;
+    margin-top: 4px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    min-width: 160px;
+    z-index: 50;
+    overflow: hidden;
+  }
+
+  &-option {
+    display: block;
+    width: 100%;
+    padding: 10px 16px;
+    background: none;
+    border: none;
+    color: var(--text);
+    font-family: var(--font-ui);
+    font-size: 13px;
+    text-align: left;
+    cursor: pointer;
+    transition: background 0.15s;
+
+    &:hover { background: var(--surface-3); }
+    & + & { border-top: 1px solid var(--border); }
+  }
 }
-.export-option {
-  display: block; width: 100%; padding: 10px 16px;
-  background: none; border: none; color: var(--text);
-  font-family: var(--font-ui); font-size: 13px; text-align: left;
-  cursor: pointer; transition: background 0.15s;
+
+.btn {
+  &:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+  }
+
+  &-danger {
+    background: var(--danger);
+    color: #fff;
+    border: none;
+    padding: 6px 14px;
+    border-radius: var(--radius);
+    font-family: var(--font-ui);
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: opacity 0.15s;
+
+    &:hover:not(:disabled) { opacity: 0.85; }
+  }
 }
-.export-option:hover { background: var(--surface-3); }
-.export-option + .export-option { border-top: 1px solid var(--border); }
-.btn:disabled { opacity: 0.6; cursor: not-allowed; }
-.btn-danger {
-  background: var(--danger); color: #fff; border: none;
-  padding: 6px 14px; border-radius: var(--radius); font-family: var(--font-ui);
-  font-size: 13px; font-weight: 600; cursor: pointer; transition: opacity 0.15s;
-}
-.btn-danger:hover:not(:disabled) { opacity: 0.85; }
-.spinner-light { border-color: rgba(255,255,255,0.3); border-top-color: #fff; }
+
 .spinner {
-  display: inline-block; width: 12px; height: 12px;
-  border: 2px solid rgba(0,0,0,0.2); border-top-color: #000;
-  border-radius: 50%; animation: spin 0.6s linear infinite;
-  vertical-align: middle; margin-right: 4px;
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border: 2px solid rgba(0,0,0,0.2);
+  border-top-color: #000;
+  border-radius: 50%;
+  animation: spin 0.6s linear infinite;
+  vertical-align: middle;
+  margin-right: 4px;
+
+  &-light {
+    border-color: rgba(255,255,255,0.3);
+    border-top-color: #fff;
+  }
 }
+
 @keyframes spin { to { transform: rotate(360deg); } }
 </style>

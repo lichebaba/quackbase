@@ -325,7 +325,8 @@ async def upload_batch(
 # ===== XLSX MULTI-SHEET PREVIEW / IMPORT =====
 def _xlsx_extract_groups(raw: bytes):
     """打开 xlsx，按表头分组 sheet。返回 (workbook, groups)。
-    groups 形如 [{group_id, sheet_names, columns, default_table_name}]，同表头的 sheet 会合并到同一组。"""
+    groups 形如 [{group_id, sheet_names, header, columns, row_count, default_table_name}]，
+    同表头的 sheet 会合并到同一组；row_count 是该组所有 sheet 数据行（不含表头）的合计。"""
     import openpyxl
     try:
         wb = openpyxl.load_workbook(io.BytesIO(raw), read_only=True, data_only=True)
@@ -336,18 +337,26 @@ def _xlsx_extract_groups(raw: bytes):
     header_index: dict = {}  # header_tuple -> idx in groups
     for sheet_name in wb.sheetnames:
         ws = wb[sheet_name]
-        first_row = next(ws.iter_rows(values_only=True), None)
+        # max_row 在 read_only 模式下偶尔不准；用 iter_rows 数一遍数据行（不含表头）
+        row_iter = ws.iter_rows(values_only=True)
+        first_row = next(row_iter, None)
         if not first_row:
             continue
+        data_rows = sum(1 for _ in row_iter)
         header = tuple("" if c is None else str(c) for c in first_row)
         if header in header_index:
-            groups[header_index[header]]["sheet_names"].append(sheet_name)
+            g = groups[header_index[header]]
+            g["sheet_names"].append(sheet_name)
+            g["row_count"] += data_rows
         else:
             header_index[header] = len(groups)
+            header_list = list(header)
             groups.append({
                 "group_id": len(groups),
                 "sheet_names": [sheet_name],
-                "columns": list(header),
+                "header": header_list,            # 前端模板用的字段名
+                "columns": header_list,           # 同义字段，兼容老调用方
+                "row_count": data_rows,
                 "default_table_name": _sanitize_table_name(sheet_name),
             })
     return wb, groups
@@ -736,8 +745,9 @@ async def group_stats(
     skip_count: bool = False,
     user=Depends(require_permission("read")),
 ):
-    """对单列做 GROUP BY 聚合统计。
+    """对一到两列做 GROUP BY 聚合统计。
 
+    group_by: 单个列名 或 JSON 列表（如 ["col1","col2"]）；最多 2 列。
     aggs JSON: [{"op": "COUNT"|"SUM"|"AVG"|"MIN"|"MAX", "col": "目标列(COUNT 可省略表示 *)", "alias": "结果列名(可选)"}]
     复用列表页的 filters / search，使分组结果与列表展示保持一致。
     """
@@ -748,8 +758,25 @@ async def group_stats(
         col_names = {c["name"] for c in col_list}
         col_type_map = {c["name"]: (c["type"] or "").upper() for c in col_list}
 
-        if group_by not in col_names:
-            raise HTTPException(400, f"分组字段 '{group_by}' 不存在")
+        # group_by 同时兼容单列名和 JSON 列表
+        gb_raw = (group_by or "").strip()
+        if gb_raw.startswith("["):
+            try:
+                group_by_list = json.loads(gb_raw)
+            except json.JSONDecodeError:
+                raise HTTPException(400, "group_by 不是合法的 JSON 列表")
+        else:
+            group_by_list = [gb_raw] if gb_raw else []
+        group_by_list = [str(c).strip() for c in group_by_list if str(c).strip()]
+        if not group_by_list:
+            raise HTTPException(400, "请至少选择一个分组字段")
+        if len(group_by_list) > 2:
+            raise HTTPException(400, "最多支持 2 个分组字段")
+        if len(set(group_by_list)) != len(group_by_list):
+            raise HTTPException(400, "分组字段不能重复")
+        for gb in group_by_list:
+            if gb not in col_names:
+                raise HTTPException(400, f"分组字段 '{gb}' 不存在")
 
         # 默认聚合：COUNT(*)
         if aggs:
@@ -764,10 +791,10 @@ async def group_stats(
             raise HTTPException(400, "aggs 至少要有一个聚合项")
 
         # 构造 SELECT 列表 + 别名校验
-        select_parts = [f'"{group_by}" AS "{group_by}"']
-        result_alias_list = [group_by]
-        result_col_types = [{"name": group_by, "type": col_type_map.get(group_by, "")}]
-        used_aliases = {group_by}
+        select_parts = [f'"{gb}" AS "{gb}"' for gb in group_by_list]
+        result_alias_list = list(group_by_list)
+        result_col_types = [{"name": gb, "type": col_type_map.get(gb, "")} for gb in group_by_list]
+        used_aliases = set(group_by_list)
 
         for idx, agg in enumerate(aggs_list):
             op_raw = str(agg.get("op", "")).upper().strip()
@@ -817,14 +844,16 @@ async def group_stats(
             if search_clause:
                 where_clause = (where_clause + " AND " + search_clause) if where_clause else ("WHERE " + search_clause)
 
-        # 排序：默认按第一个聚合项 DESC，否则按 group_by ASC
+        group_by_sql = ", ".join(f'"{gb}"' for gb in group_by_list)
+
+        # 排序：默认按第一个聚合项 DESC，否则按第一个 group_by ASC
         if sort_col and sort_col in used_aliases:
             order_alias = sort_col
-        elif len(result_alias_list) > 1:
-            order_alias = result_alias_list[1]
+        elif len(result_alias_list) > len(group_by_list):
+            order_alias = result_alias_list[len(group_by_list)]
             sort_dir = sort_dir or "desc"
         else:
-            order_alias = group_by
+            order_alias = group_by_list[0]
             sort_dir = sort_dir or "asc"
         order_direction = "DESC" if sort_dir.lower() == "desc" else "ASC"
 
@@ -834,14 +863,14 @@ async def group_stats(
         total = None
         if not skip_count:
             total = conn.execute(
-                f'SELECT COUNT(*) FROM (SELECT "{group_by}" FROM "{table_name}" {where_clause} GROUP BY "{group_by}") AS _grp',
+                f'SELECT COUNT(*) FROM (SELECT {group_by_sql} FROM "{table_name}" {where_clause} GROUP BY {group_by_sql}) AS _grp',
                 params,
             ).fetchone()[0]
 
         select_sql = ", ".join(select_parts)
         sql = (
             f'SELECT {select_sql} FROM "{table_name}" {where_clause} '
-            f'GROUP BY "{group_by}" ORDER BY "{order_alias}" {order_direction} NULLS LAST '
+            f'GROUP BY {group_by_sql} ORDER BY "{order_alias}" {order_direction} NULLS LAST '
             f'LIMIT {page_size} OFFSET {offset}'
         )
         rows_raw = conn.execute(sql, params).fetchall()
@@ -858,7 +887,7 @@ async def group_stats(
             "page": page,
             "page_size": page_size,
             "total_pages": (max(1, (total + page_size - 1) // page_size) if total is not None else None),
-            "group_by": group_by,
+            "group_by": group_by_list,
             "aggs": aggs_list,
             "skipped_count": skip_count,
         }
