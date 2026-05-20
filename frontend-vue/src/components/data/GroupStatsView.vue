@@ -1,113 +1,125 @@
 <template>
   <div class="group-stats">
-    <div class="config-panel">
-      <div class="config-row">
-        <label class="config-label">分组字段</label>
-        <select :value="groupBy0" class="form-select compact" :disabled="dataStore.columns.length === 0" @change="onGroupChange(0, $event.target.value)">
-          <option value="" disabled>— 选择主分组列 —</option>
-          <option v-for="c in dataStore.columns" :key="c.name" :value="c.name">{{ c.name }} ({{ formatType(c.type) }})</option>
-        </select>
-        <select :value="groupBy1" class="form-select compact" :disabled="!groupBy0 || dataStore.columns.length === 0" @change="onGroupChange(1, $event.target.value)">
-          <option value="">— 次级分组（可选）—</option>
-          <option v-for="c in secondaryColOptions" :key="c.name" :value="c.name">{{ c.name }} ({{ formatType(c.type) }})</option>
-        </select>
-      </div>
-
-      <div class="aggs-block">
-        <label class="config-label">聚合项</label>
-        <div class="agg-list">
-          <div v-for="(agg, idx) in groupStore.aggs" :key="idx" class="agg-row">
-            <select v-model="agg.op" class="form-select compact agg-op">
-              <option value="COUNT">COUNT 计数</option>
-              <option value="SUM">SUM 求和</option>
-              <option value="AVG">AVG 平均值</option>
-              <option value="MIN">MIN 最小值</option>
-              <option value="MAX">MAX 最大值</option>
-            </select>
-            <select v-model="agg.col" class="form-select compact agg-col">
-              <option v-if="agg.op === 'COUNT'" value="*">* (所有行)</option>
-              <option v-for="c in colOptions(agg.op)" :key="c.name" :value="c.name">{{ c.name }}</option>
-            </select>
-            <input v-model="agg.alias" type="text" class="form-input compact agg-alias" :placeholder="defaultAlias(agg)" />
-            <button class="icon-btn" :disabled="groupStore.aggs.length === 1" title="删除此聚合项" @click="groupStore.removeAgg(idx)">✕</button>
-          </div>
+    <!-- 统计配置 card -->
+    <section class="qb-card config-card">
+      <header class="qb-card-header">
+        <span class="qb-card-title">📊 统计配置</span>
+        <div class="config-card-actions">
+          <span v-if="usingFilters" class="hint">已应用 {{ filterDesc }}</span>
+          <span v-else class="hint">未应用任何筛选 / 搜索</span>
+          <button class="btn btn-ghost" :disabled="!groupStore.hasResult" @click="exportStats">↓ 导出 CSV</button>
+          <button class="btn btn-primary" :disabled="!canRun || groupStore.loading" @click="run">
+            <template v-if="groupStore.loading">统计中...</template>
+            <template v-else>应用统计</template>
+          </button>
         </div>
-        <button class="btn-add-agg" @click="groupStore.addAgg">+ 添加聚合项</button>
+      </header>
+      <div class="qb-card-body config-panel">
+        <div class="config-row">
+          <label class="config-label">分组字段</label>
+          <select :value="groupBy0" class="form-select compact" :disabled="dataStore.columns.length === 0" @change="onGroupChange(0, $event.target.value)">
+            <option value="" disabled>— 选择主分组列 —</option>
+            <option v-for="c in dataStore.columns" :key="c.name" :value="c.name">{{ c.name }} ({{ formatType(c.type) }})</option>
+          </select>
+          <select :value="groupBy1" class="form-select compact" :disabled="!groupBy0 || dataStore.columns.length === 0" @change="onGroupChange(1, $event.target.value)">
+            <option value="">— 次级分组（可选）—</option>
+            <option v-for="c in secondaryColOptions" :key="c.name" :value="c.name">{{ c.name }} ({{ formatType(c.type) }})</option>
+          </select>
+        </div>
+
+        <div class="aggs-block">
+          <label class="config-label">聚合项</label>
+          <div class="agg-list">
+            <div v-for="(agg, idx) in groupStore.aggs" :key="idx" class="agg-row">
+              <select v-model="agg.op" class="form-select compact agg-op">
+                <option value="COUNT">COUNT 计数</option>
+                <option value="SUM">SUM 求和</option>
+                <option value="AVG">AVG 平均值</option>
+                <option value="MIN">MIN 最小值</option>
+                <option value="MAX">MAX 最大值</option>
+              </select>
+              <select v-model="agg.col" class="form-select compact agg-col">
+                <option v-if="agg.op === 'COUNT'" value="*">* (所有行)</option>
+                <option v-for="c in colOptions(agg.op)" :key="c.name" :value="c.name">{{ c.name }}</option>
+              </select>
+              <input v-model="agg.alias" type="text" class="form-input compact agg-alias" :placeholder="defaultAlias(agg)" />
+              <button class="icon-btn" :disabled="groupStore.aggs.length === 1" title="删除此聚合项" @click="groupStore.removeAgg(idx)">✕</button>
+            </div>
+          </div>
+          <button class="btn-add-agg" @click="groupStore.addAgg">+ 添加聚合项</button>
+        </div>
+
+        <div v-if="groupStore.lastError" class="error-banner">{{ groupStore.lastError }}</div>
+      </div>
+    </section>
+
+    <!-- 统计结果 card -->
+    <section class="qb-card result-card">
+      <header class="qb-card-header">
+        <span class="qb-card-title">📈 统计结果</span>
+        <span v-if="groupStore.hasResult" class="result-meta">共 {{ groupStore.total.toLocaleString() }} 个分组</span>
+      </header>
+      <div class="result-area">
+        <div v-if="!groupStore.hasResult && !groupStore.loading" class="empty-tip">
+          选择分组字段与聚合项后，点击「应用统计」生成结果。
+        </div>
+        <div v-else-if="groupStore.loading" class="empty-tip">统计中...</div>
+        <div v-else class="result-scroll">
+          <table class="data-table" :style="{ width: tableWidth }">
+            <colgroup>
+              <col style="width:44px" />
+              <col v-for="c in groupStore.columns" :key="c.name" :style="{ width: colWidth(c.name) }" />
+            </colgroup>
+            <thead>
+              <tr>
+                <th><div class="th-inner">#</div></th>
+                <th v-for="c in groupStore.columns" :key="c.name" :class="{ sorted: groupStore.sortCol === c.name }">
+                  <div class="th-inner" @click="onSort(c.name)">
+                    <span class="th-name">{{ c.name }}</span>
+                    <span class="th-type">{{ formatType(c.type) }}</span>
+                    <span class="sort-icon">{{ groupStore.sortCol === c.name ? (groupStore.sortDir === 'asc' ? '↑' : '↓') : '↕' }}</span>
+                  </div>
+                  <div class="col-resizer"
+                       :class="{ active: resizingCol === c.name }"
+                       @mousedown.stop.prevent="startResize($event, c.name)"
+                       @dblclick.stop.prevent="resetColWidth(c.name)"
+                       title="拖动调整列宽，双击重置"></div>
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-if="groupStore.rows.length === 0">
+                <td :colspan="groupStore.columns.length + 1" class="empty-cell">暂无分组数据</td>
+              </tr>
+              <tr v-for="(row, i) in groupStore.rows" :key="i">
+                <td class="row-num">{{ (groupStore.page - 1) * groupStore.pageSize + i + 1 }}</td>
+                <td v-for="c in groupStore.columns" :key="c.name"
+                    :class="{ 'null-val': row[c.name] === null || row[c.name] === undefined, 'num-val': isNumericType(c.type) && row[c.name] !== null }"
+                    :title="String(row[c.name] ?? '')">
+                  {{ formatCell(row[c.name], c.type) }}
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
       </div>
 
-      <div class="config-actions">
-        <span v-if="usingFilters" class="hint">当前结果已应用 {{ filterDesc }}</span>
-        <span v-else class="hint">未应用任何筛选 / 搜索</span>
-        <button class="btn btn-ghost" :disabled="!groupStore.hasResult" @click="exportStats">↓ 导出 CSV</button>
-        <button class="btn btn-primary" :disabled="!canRun || groupStore.loading" @click="run">
-          <template v-if="groupStore.loading">统计中...</template>
-          <template v-else>应用统计</template>
-        </button>
+      <div v-if="groupStore.hasResult" class="pagination">
+        <button class="pg-btn" :disabled="groupStore.page <= 1" @click="goPage(1)">«</button>
+        <button class="pg-btn" :disabled="groupStore.page <= 1" @click="goPage(groupStore.page - 1)">‹</button>
+        <div class="pg-info">
+          共 {{ groupStore.total.toLocaleString() }} 个分组 ({{ groupStore.page }}/{{ groupStore.totalPages }} 页)
+        </div>
+        <button class="pg-btn" :disabled="groupStore.page >= groupStore.totalPages" @click="goPage(groupStore.page + 1)">›</button>
+        <button class="pg-btn" :disabled="groupStore.page >= groupStore.totalPages" @click="goPage(groupStore.totalPages)">»</button>
+        <select class="pg-size" :value="groupStore.pageSize" @change="onSizeChange">
+          <option :value="25">25 行</option>
+          <option :value="50">50 行</option>
+          <option :value="100">100 行</option>
+          <option :value="200">200 行</option>
+        </select>
       </div>
-
-      <div v-if="groupStore.lastError" class="error-banner">{{ groupStore.lastError }}</div>
-    </div>
-
-    <div class="result-area">
-      <div v-if="!groupStore.hasResult && !groupStore.loading" class="empty-tip">
-        选择分组字段与聚合项后，点击「应用统计」生成结果。
-      </div>
-      <div v-else-if="groupStore.loading" class="empty-tip">统计中...</div>
-      <div v-else class="result-scroll">
-        <table class="data-table" :style="{ width: tableWidth }">
-          <colgroup>
-            <col style="width:44px" />
-            <col v-for="c in groupStore.columns" :key="c.name" :style="{ width: colWidth(c.name) }" />
-          </colgroup>
-          <thead>
-            <tr>
-              <th><div class="th-inner">#</div></th>
-              <th v-for="c in groupStore.columns" :key="c.name" :class="{ sorted: groupStore.sortCol === c.name }">
-                <div class="th-inner" @click="onSort(c.name)">
-                  <span class="th-name">{{ c.name }}</span>
-                  <span class="th-type">{{ formatType(c.type) }}</span>
-                  <span class="sort-icon">{{ groupStore.sortCol === c.name ? (groupStore.sortDir === 'asc' ? '↑' : '↓') : '↕' }}</span>
-                </div>
-                <div class="col-resizer"
-                     :class="{ active: resizingCol === c.name }"
-                     @mousedown.stop.prevent="startResize($event, c.name)"
-                     @dblclick.stop.prevent="resetColWidth(c.name)"
-                     title="拖动调整列宽，双击重置"></div>
-              </th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-if="groupStore.rows.length === 0">
-              <td :colspan="groupStore.columns.length + 1" class="empty-cell">暂无分组数据</td>
-            </tr>
-            <tr v-for="(row, i) in groupStore.rows" :key="i">
-              <td class="row-num">{{ (groupStore.page - 1) * groupStore.pageSize + i + 1 }}</td>
-              <td v-for="c in groupStore.columns" :key="c.name"
-                  :class="{ 'null-val': row[c.name] === null || row[c.name] === undefined, 'num-val': isNumericType(c.type) && row[c.name] !== null }"
-                  :title="String(row[c.name] ?? '')">
-                {{ formatCell(row[c.name], c.type) }}
-              </td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-    </div>
-
-    <div v-if="groupStore.hasResult" class="pagination">
-      <button class="pg-btn" :disabled="groupStore.page <= 1" @click="goPage(1)">«</button>
-      <button class="pg-btn" :disabled="groupStore.page <= 1" @click="goPage(groupStore.page - 1)">‹</button>
-      <div class="pg-info">
-        共 {{ groupStore.total.toLocaleString() }} 个分组 ({{ groupStore.page }}/{{ groupStore.totalPages }} 页)
-      </div>
-      <button class="pg-btn" :disabled="groupStore.page >= groupStore.totalPages" @click="goPage(groupStore.page + 1)">›</button>
-      <button class="pg-btn" :disabled="groupStore.page >= groupStore.totalPages" @click="goPage(groupStore.totalPages)">»</button>
-      <select class="pg-size" :value="groupStore.pageSize" @change="onSizeChange">
-        <option :value="25">25 行</option>
-        <option :value="50">50 行</option>
-        <option :value="100">100 行</option>
-        <option :value="200">200 行</option>
-      </select>
-    </div>
+    </section>
   </div>
 </template>
 
@@ -281,18 +293,36 @@ watch(() => tablesStore.currentTable, () => {
   flex: 1;
   display: flex;
   flex-direction: column;
+  gap: 12px;
   overflow: hidden;
+  min-height: 0;
+  padding-bottom: 12px;
+}
+
+.config-card {
+  flex-shrink: 0;
+}
+
+.result-card {
+  flex: 1;
+  min-height: 0;
+}
+
+.config-card-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+
+  .hint {
+    font-size: 11px;
+    color: var(--text-muted);
+    margin-right: 4px;
+  }
 }
 
 .config {
   &-panel {
-    background: var(--surface);
-    border-bottom: 1px solid var(--border);
-    padding: 14px 20px;
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-    flex-shrink: 0;
+    /* qb-card-body 已提供基础布局 */
   }
 
   &-row {
@@ -308,12 +338,6 @@ watch(() => tablesStore.currentTable, () => {
     text-transform: uppercase;
     color: var(--text-muted);
     min-width: 72px;
-  }
-
-  &-actions {
-    display: flex;
-    align-items: center;
-    gap: 10px;
   }
 }
 
@@ -368,7 +392,12 @@ watch(() => tablesStore.currentTable, () => {
 .hint {
   font-size: 12px;
   color: var(--text-muted);
-  flex: 1;
+}
+
+.result-meta {
+  font-size: 11px;
+  font-family: var(--font-mono);
+  color: var(--text-muted);
 }
 
 .error-banner {
@@ -385,6 +414,7 @@ watch(() => tablesStore.currentTable, () => {
   overflow: hidden;
   display: flex;
   flex-direction: column;
+  min-height: 0;
 }
 
 .empty-tip {

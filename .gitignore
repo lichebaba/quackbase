@@ -28,3 +28,5 @@ Thumbs.db
 # 环境变量
 .env
 .env.local
+
+backend/.venv

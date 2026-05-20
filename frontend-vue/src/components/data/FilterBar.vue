@@ -45,12 +45,9 @@ function editFilter(idx) {
 
 <style scoped lang="scss">
 .filter-bar {
-  background: var(--surface);
-  border-bottom: 1px solid var(--border);
-  padding: 10px 20px;
   flex-shrink: 0;
 
-  &-minimal { padding: 8px 20px; }
+  &-minimal { }
 
   &-inner {
     display: flex;

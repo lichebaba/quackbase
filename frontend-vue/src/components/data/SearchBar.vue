@@ -51,9 +51,6 @@ function clearSearch() {
 <style scoped lang="scss">
 .search {
   &-bar {
-    background: var(--surface);
-    border-bottom: 1px solid var(--border);
-    padding: 8px 20px;
     flex-shrink: 0;
   }
 
