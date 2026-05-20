@@ -5,6 +5,10 @@
       <div class="breadcrumb">
         <span>{{ tablesStore.currentTable || '— 请选择数据表 —' }}</span>
       </div>
+      <div v-if="tablesStore.currentTable" class="view-switch">
+        <button class="view-tab" :class="{ active: dataStore.viewMode !== 'group' }" @click="dataStore.setViewMode('data', tablesStore.currentTable)">📋 数据</button>
+        <button class="view-tab" :class="{ active: dataStore.viewMode === 'group' }" @click="dataStore.setViewMode('group', tablesStore.currentTable)">📊 分组统计</button>
+      </div>
     </div>
     <div class="topbar-right">
       <span v-if="tablesStore.currentTable && isFiltered" class="row-count">筛选 {{ dataStore.total.toLocaleString() }} / 共 {{ realTotal.toLocaleString() }} 行</span>
@@ -65,7 +69,9 @@ function toggleSidebar() {
 
 function doClearFilters() {
   dataStore.clearFilters()
-  dataStore.loadData(tablesStore.currentTable)
+  if (dataStore.viewMode !== 'group') {
+    dataStore.loadData(tablesStore.currentTable).catch(e => toast.add(e.message || '加载数据失败', 'error'))
+  }
 }
 
 async function doDelete() {
@@ -113,6 +119,19 @@ onUnmounted(() => document.removeEventListener('click', onClickOutside))
   padding: 0 20px; background: var(--surface); flex-shrink: 0;
 }
 .topbar-left { display: flex; align-items: center; gap: 12px; }
+.view-switch {
+  display: flex; gap: 2px; background: var(--surface-2);
+  border: 1px solid var(--border); border-radius: 999px; padding: 2px;
+  margin-left: 8px;
+}
+.view-tab {
+  background: none; border: none; color: var(--text-sub);
+  font-family: var(--font-ui); font-size: 12px; font-weight: 600;
+  padding: 4px 12px; border-radius: 999px; cursor: pointer;
+  transition: all 0.15s;
+}
+.view-tab:hover { color: var(--text); }
+.view-tab.active { background: var(--accent); color: #000; }
 .sidebar-toggle {
   background: none; border: 1px solid var(--border); color: var(--text-sub);
   width: 32px; height: 32px; border-radius: 6px; cursor: pointer;

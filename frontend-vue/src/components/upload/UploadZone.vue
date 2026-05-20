@@ -271,7 +271,7 @@ async function confirmUpload() {
   const target = targetTable.value
   const comments = skipComments.value
 
-  if (mode === 'replace' && items.length === 1 && items[0].file.name.endsWith('.xlsx')) {
+  if (mode === 'replace' && items.length === 1 && /\.xlsx$/i.test(items[0].file.name)) {
     await previewXlsx(items[0].file)
     return
   }

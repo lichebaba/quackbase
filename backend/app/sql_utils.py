@@ -78,14 +78,46 @@ def build_where(filter_list, params, columns=None):
     return ("WHERE " + " AND ".join(conditions)) if conditions else "", params
 
 
+_NON_TEXT_TYPE_KEYWORDS = ("INT", "FLOAT", "DOUBLE", "DECIMAL", "NUMERIC", "REAL",
+                           "TIMESTAMP", "DATE", "TIME", "BOOLEAN", "BOOL", "INTERVAL", "BIT", "HUGEINT")
+
+
+def _is_text_column(col_type: str) -> bool:
+    """判断列是否文本类型 —— 用于全局搜索时只扫描文本列，跳过数值/时间列上的 CAST+ILIKE 全表扫描。"""
+    t = (col_type or "").upper()
+    if not t:
+        # 类型未知时保守地保留，按文本处理
+        return True
+    return not any(k in t for k in _NON_TEXT_TYPE_KEYWORDS)
+
+
+def _is_pure_varchar(col_type: str) -> bool:
+    """是否已经是 VARCHAR/TEXT，可省去 CAST(... AS VARCHAR)。"""
+    t = (col_type or "").upper()
+    return t.startswith("VARCHAR") or t.startswith("TEXT") or t in ("STRING",)
+
+
 def build_search_clause(columns, search_term, params):
-    """Build a search clause that searches across all VARCHAR columns."""
+    """Build a search clause across textual columns.
+
+    优化：
+    - 跳过数值 / 时间 / 布尔 列：这些列上 CAST(... AS VARCHAR) ILIKE '%x%' 几乎不会
+      产生有意义的命中，却会强制对全表每行做一次 CAST + 字符串匹配，是大表搜索的主要瓶颈。
+    - 对已经是 VARCHAR 的列省去 CAST，直接 ILIKE。
+    """
     if not search_term:
         return "", params
     conditions = []
+    pattern = f"%{search_term}%"
     for col in columns:
-        conditions.append(f'CAST("{col["name"]}" AS VARCHAR) ILIKE ?')
-        params.append(f"%{search_term}%")
+        col_type = col.get("type", "") if isinstance(col, dict) else ""
+        if not _is_text_column(col_type):
+            continue
+        if _is_pure_varchar(col_type):
+            conditions.append(f'"{col["name"]}" ILIKE ?')
+        else:
+            conditions.append(f'CAST("{col["name"]}" AS VARCHAR) ILIKE ?')
+        params.append(pattern)
     if not conditions:
         return "", params
     return "(" + " OR ".join(conditions) + ")", params
@@ -126,13 +158,19 @@ def build_where_inline(filter_list, columns=None):
 
 
 def build_search_clause_inline(columns, search_term):
-    """Build search clause with values inlined (for COPY statements)."""
+    """Build search clause with values inlined (for COPY statements). 同 build_search_clause 的优化。"""
     if not search_term:
         return ""
     conditions = []
     escaped = _escape_sql_value(f"%{search_term}%")
     for col in columns:
-        conditions.append(f'CAST("{col["name"]}" AS VARCHAR) ILIKE {escaped}')
+        col_type = col.get("type", "") if isinstance(col, dict) else ""
+        if not _is_text_column(col_type):
+            continue
+        if _is_pure_varchar(col_type):
+            conditions.append(f'"{col["name"]}" ILIKE {escaped}')
+        else:
+            conditions.append(f'CAST("{col["name"]}" AS VARCHAR) ILIKE {escaped}')
     if not conditions:
         return ""
     return "(" + " OR ".join(conditions) + ")"

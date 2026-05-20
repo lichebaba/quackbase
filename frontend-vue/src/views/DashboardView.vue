@@ -36,8 +36,9 @@
 
       <!-- Data table area -->
       <div v-else class="table-area">
-        <DataTable />
-        <PaginationBar />
+        <DataTable v-if="dataStore.viewMode !== 'group'" />
+        <PaginationBar v-if="dataStore.viewMode !== 'group'" />
+        <GroupStatsView v-else />
       </div>
     </main>
 
@@ -51,6 +52,7 @@
 <script setup>
 import { onMounted } from 'vue'
 import { useTablesStore } from '../stores/tables'
+import { useDataStore } from '../stores/data'
 
 import AppSidebar from '../components/layout/AppSidebar.vue'
 import AppTopbar from '../components/layout/AppTopbar.vue'
@@ -59,10 +61,12 @@ import SearchBar from '../components/data/SearchBar.vue'
 import DataTable from '../components/data/DataTable.vue'
 import PaginationBar from '../components/data/PaginationBar.vue'
 import FilterModal from '../components/data/FilterModal.vue'
+import GroupStatsView from '../components/data/GroupStatsView.vue'
 import UploadModeDialog from '../components/upload/UploadModeDialog.vue'
 import UserManagement from '../components/admin/UserManagement.vue'
 
 const tablesStore = useTablesStore()
+const dataStore = useDataStore()
 
 onMounted(() => {
   tablesStore.loadTables()

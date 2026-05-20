@@ -197,6 +197,17 @@ def _zip_storage_filename(relative_path: str) -> str:
     return f"{safe_stem}{p.suffix.lower()}"
 
 
+def _validate_upload_ext(filename: str) -> Optional[str]:
+    """检查文件扩展名是否支持。返回 None 表示通过，否则返回错误描述。
+    注意：扩展名校验统一转小写，避免 .XLSX / .Xlsx 之类被误拒。"""
+    name = (filename or "").lower()
+    if name.endswith(".csv") or name.endswith(".xlsx"):
+        return None
+    if name.endswith(".xls"):
+        return "不支持旧版 .xls 格式，请在 Excel 中另存为 .xlsx 后再上传"
+    return "只支持 CSV 和 XLSX 文件"
+
+
 # ===== UPLOAD (single file) =====
 @router.post("/upload")
 async def upload_file(
@@ -206,8 +217,9 @@ async def upload_file(
     skip_comments: str = Form("false"),
     user=Depends(require_permission("upload")),
 ):
-    if not file.filename.endswith((".csv", ".xlsx")):
-        raise HTTPException(400, "只支持 CSV 和 XLSX 文件")
+    err = _validate_upload_ext(file.filename)
+    if err:
+        raise HTTPException(400, err)
     if mode not in ("replace", "append"):
         raise HTTPException(400, "mode 参数只支持 replace 或 append")
 
@@ -269,8 +281,9 @@ async def upload_batch(
     results = []
 
     for idx, file in enumerate(files):
-        if not file.filename.endswith((".csv", ".xlsx")):
-            results.append({"filename": file.filename, "success": False, "error": "只支持 CSV 和 XLSX 文件"})
+        ext_err = _validate_upload_ext(file.filename)
+        if ext_err:
+            results.append({"filename": file.filename, "success": False, "error": ext_err})
             continue
 
         save_path = _read_file_as_csv_path(file, user_id)
@@ -305,6 +318,142 @@ async def upload_batch(
             results.append({"filename": file.filename, "success": True, "table": tname, "row_count": row_count})
         except Exception as e:
             results.append({"filename": file.filename, "success": False, "error": str(e)})
+
+    return {"results": results}
+
+
+# ===== XLSX MULTI-SHEET PREVIEW / IMPORT =====
+def _xlsx_extract_groups(raw: bytes):
+    """打开 xlsx，按表头分组 sheet。返回 (workbook, groups)。
+    groups 形如 [{group_id, sheet_names, columns, default_table_name}]，同表头的 sheet 会合并到同一组。"""
+    import openpyxl
+    try:
+        wb = openpyxl.load_workbook(io.BytesIO(raw), read_only=True, data_only=True)
+    except Exception as e:
+        raise HTTPException(400, f"无法解析 xlsx 文件：{e}")
+
+    groups: list = []  # 保留出现顺序
+    header_index: dict = {}  # header_tuple -> idx in groups
+    for sheet_name in wb.sheetnames:
+        ws = wb[sheet_name]
+        first_row = next(ws.iter_rows(values_only=True), None)
+        if not first_row:
+            continue
+        header = tuple("" if c is None else str(c) for c in first_row)
+        if header in header_index:
+            groups[header_index[header]]["sheet_names"].append(sheet_name)
+        else:
+            header_index[header] = len(groups)
+            groups.append({
+                "group_id": len(groups),
+                "sheet_names": [sheet_name],
+                "columns": list(header),
+                "default_table_name": _sanitize_table_name(sheet_name),
+            })
+    return wb, groups
+
+
+@router.post("/upload/xlsx-preview")
+async def upload_xlsx_preview(
+    file: UploadFile = File(...),
+    user=Depends(require_permission("upload")),
+):
+    """多 Sheet xlsx 预览：按表头分组返回，让用户在前端勾选哪些组要导入。
+    本接口不持久化文件，前端在 xlsx-import 时会再次上传同一文件。"""
+    if not (file.filename or "").lower().endswith(".xlsx"):
+        raise HTTPException(400, "只支持 .xlsx 文件")
+    raw = await file.read()
+    wb, groups = _xlsx_extract_groups(raw)
+    wb.close()
+    if not groups:
+        raise HTTPException(400, "Excel 文件中没有可用的 Sheet（所有 Sheet 都为空）")
+    return {"filename": file.filename, "groups": groups}
+
+
+@router.post("/upload/xlsx-import")
+async def upload_xlsx_import(
+    file: UploadFile = File(...),
+    plan: str = Form(...),
+    mode: str = Form("replace"),
+    skip_comments: str = Form("false"),
+    user=Depends(require_permission("upload")),
+):
+    """多 Sheet xlsx 导入：按 plan 中的分组，把同表头的多个 Sheet 合并成一个表入库。
+    plan JSON 形如 [{"group_id", "table_name", "sheet_names": [...], "include": bool}]。"""
+    if not (file.filename or "").lower().endswith(".xlsx"):
+        raise HTTPException(400, "只支持 .xlsx 文件")
+    try:
+        plan_obj = json.loads(plan)
+    except json.JSONDecodeError:
+        raise HTTPException(400, "plan 不是合法 JSON")
+    if not isinstance(plan_obj, list) or not plan_obj:
+        raise HTTPException(400, "plan 不能为空")
+
+    raw = await file.read()
+    user_id = user["sub"]
+    conn = get_user_db(user_id)
+    storage = get_storage()
+
+    wb, _existing_groups = _xlsx_extract_groups(raw)
+    available_sheets = set(wb.sheetnames)
+    results = []
+
+    try:
+        for group in plan_obj:
+            if not group.get("include", True):
+                continue
+            table_name = (group.get("table_name") or "").strip()
+            if not table_name:
+                results.append({"success": False, "error": "缺少表名"})
+                continue
+            sheet_names = group.get("sheet_names") or []
+            sheet_names = [s for s in sheet_names if s in available_sheets]
+            if not sheet_names:
+                results.append({"success": False, "error": f"分组 {table_name} 中没有有效的 Sheet", "table": table_name})
+                continue
+
+            try:
+                # 合并同分组下的所有 sheet 为一个 CSV
+                output = io.StringIO()
+                writer = csv.writer(output)
+                header_written = False
+                for sname in sheet_names:
+                    ws = wb[sname]
+                    rows_iter = ws.iter_rows(values_only=True)
+                    first = next(rows_iter, None)
+                    if first is None:
+                        continue
+                    if not header_written:
+                        writer.writerow(first)
+                        header_written = True
+                    for row in rows_iter:
+                        writer.writerow(row)
+                if not header_written:
+                    results.append({"success": False, "error": "分组内所有 Sheet 都没有数据", "table": table_name})
+                    continue
+
+                csv_bytes = output.getvalue().encode("utf-8")
+                csv_filename = f"{table_name}.csv"
+                storage.save(user_id, csv_filename, csv_bytes)
+                save_path = storage.get_local_path(user_id, csv_filename)
+                if skip_comments.lower() in ("true", "1", "yes"):
+                    _preprocess_csv(save_path)
+
+                conn.execute(f'DROP TABLE IF EXISTS "{table_name}"')
+                _duckdb_read_csv(conn, save_path, table_name)
+                row_count = conn.execute(f'SELECT COUNT(*) FROM "{table_name}"').fetchone()[0]
+                cols = conn.execute(f'DESCRIBE "{table_name}"').fetchall()
+                results.append({
+                    "success": True,
+                    "table": table_name,
+                    "row_count": row_count,
+                    "columns": [{"name": c[0], "type": c[1]} for c in cols],
+                    "merged_sheets": sheet_names,
+                })
+            except Exception as e:
+                results.append({"success": False, "error": str(e), "table": table_name})
+    finally:
+        wb.close()
 
     return {"results": results}
 
@@ -423,6 +572,7 @@ async def get_table_data(
     sort_dir: str = "asc",
     filters: Optional[str] = None,
     search: Optional[str] = None,
+    skip_count: bool = False,
     user=Depends(require_permission("read")),
 ):
     conn = get_user_db(user["sub"])
@@ -445,21 +595,28 @@ async def get_table_data(
         order_clause = f'ORDER BY "{sort_col}" {"DESC" if sort_dir.lower() == "desc" else "ASC"}' if sort_col else ""
         offset = (page - 1) * page_size
 
-        total = conn.execute(f'SELECT COUNT(*) FROM "{table_name}" {where_clause}', params).fetchone()[0]
+        # 翻页 / 调整 page size 时筛选条件没变，前端会传 skip_count=true 让我们跳过 COUNT，
+        # 这是大表搜索 / 复杂筛选时的主要省时点（COUNT 必须全表扫描，无法用 LIMIT 短路）。
+        total = None
+        if not skip_count:
+            total = conn.execute(f'SELECT COUNT(*) FROM "{table_name}" {where_clause}', params).fetchone()[0]
         rows_raw = conn.execute(
             f'SELECT * FROM "{table_name}" {where_clause} {order_clause} LIMIT {page_size} OFFSET {offset}', params
         ).fetchall()
-        cols = conn.execute(f'DESCRIBE "{table_name}"').fetchall()
-        col_names = [c[0] for c in cols]
+        col_names = [c["name"] for c in col_list]
         rows = [dict(zip(col_names, row)) for row in rows_raw]
         for row in rows:
             for k, v in row.items():
                 if not isinstance(v, (str, int, float, bool, type(None))):
                     row[k] = str(v)
         return {
-            "columns": [{"name": c[0], "type": c[1]} for c in cols],
-            "rows": rows, "total": total, "page": page, "page_size": page_size,
-            "total_pages": max(1, (total + page_size - 1) // page_size),
+            "columns": col_list,
+            "rows": rows,
+            "total": total,
+            "page": page,
+            "page_size": page_size,
+            "total_pages": (max(1, (total + page_size - 1) // page_size) if total is not None else None),
+            "skipped_count": skip_count,
         }
     except Exception as e:
         raise HTTPException(500, str(e))
@@ -551,6 +708,162 @@ async def export_csv(
                 ),
             },
         )
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
+# ===== GROUP STATS =====
+_NUMERIC_TYPE_KEYWORDS = ("INT", "FLOAT", "DOUBLE", "DECIMAL", "NUMERIC", "REAL", "BIGINT", "HUGEINT", "TINYINT", "SMALLINT")
+_AGG_OPS = {"COUNT", "SUM", "AVG", "MIN", "MAX"}
+
+
+def _is_numeric_type(col_type: str) -> bool:
+    t = (col_type or "").upper()
+    return any(k in t for k in _NUMERIC_TYPE_KEYWORDS)
+
+
+@router.get("/table/{table_name}/group-stats")
+async def group_stats(
+    table_name: str,
+    group_by: str,
+    aggs: Optional[str] = None,
+    filters: Optional[str] = None,
+    search: Optional[str] = None,
+    sort_col: Optional[str] = None,
+    sort_dir: str = "desc",
+    page: int = 1,
+    page_size: int = 50,
+    skip_count: bool = False,
+    user=Depends(require_permission("read")),
+):
+    """对单列做 GROUP BY 聚合统计。
+
+    aggs JSON: [{"op": "COUNT"|"SUM"|"AVG"|"MIN"|"MAX", "col": "目标列(COUNT 可省略表示 *)", "alias": "结果列名(可选)"}]
+    复用列表页的 filters / search，使分组结果与列表展示保持一致。
+    """
+    conn = get_user_db(user["sub"])
+    try:
+        cols = conn.execute(f'DESCRIBE "{table_name}"').fetchall()
+        col_list = [{"name": c[0], "type": c[1]} for c in cols]
+        col_names = {c["name"] for c in col_list}
+        col_type_map = {c["name"]: (c["type"] or "").upper() for c in col_list}
+
+        if group_by not in col_names:
+            raise HTTPException(400, f"分组字段 '{group_by}' 不存在")
+
+        # 默认聚合：COUNT(*)
+        if aggs:
+            try:
+                aggs_list = json.loads(aggs)
+            except json.JSONDecodeError:
+                raise HTTPException(400, "aggs 参数不是合法 JSON")
+        else:
+            aggs_list = [{"op": "COUNT", "col": "*", "alias": "count"}]
+
+        if not isinstance(aggs_list, list) or not aggs_list:
+            raise HTTPException(400, "aggs 至少要有一个聚合项")
+
+        # 构造 SELECT 列表 + 别名校验
+        select_parts = [f'"{group_by}" AS "{group_by}"']
+        result_alias_list = [group_by]
+        result_col_types = [{"name": group_by, "type": col_type_map.get(group_by, "")}]
+        used_aliases = {group_by}
+
+        for idx, agg in enumerate(aggs_list):
+            op_raw = str(agg.get("op", "")).upper().strip()
+            target_col = (agg.get("col") or "").strip()
+            user_alias = (agg.get("alias") or "").strip()
+
+            if op_raw not in _AGG_OPS:
+                raise HTTPException(400, f"不支持的聚合操作: {op_raw}")
+
+            if op_raw == "COUNT":
+                if not target_col or target_col == "*":
+                    expr = "COUNT(*)"
+                    default_alias = "count"
+                else:
+                    if target_col not in col_names:
+                        raise HTTPException(400, f"列 '{target_col}' 不存在")
+                    expr = f'COUNT("{target_col}")'
+                    default_alias = f"count_{target_col}"
+            else:
+                if not target_col or target_col == "*":
+                    raise HTTPException(400, f"{op_raw} 必须指定目标列")
+                if target_col not in col_names:
+                    raise HTTPException(400, f"列 '{target_col}' 不存在")
+                if op_raw in ("SUM", "AVG") and not _is_numeric_type(col_type_map.get(target_col, "")):
+                    raise HTTPException(400, f"{op_raw} 只能用于数值列，'{target_col}' 类型是 {col_type_map.get(target_col)}")
+                expr = f'{op_raw}("{target_col}")'
+                default_alias = f"{op_raw.lower()}_{target_col}"
+
+            alias = user_alias or default_alias
+            # 避免别名冲突
+            base = alias
+            n = 2
+            while alias in used_aliases:
+                alias = f"{base}_{n}"
+                n += 1
+            used_aliases.add(alias)
+
+            select_parts.append(f'{expr} AS "{alias}"')
+            result_alias_list.append(alias)
+            result_col_types.append({"name": alias, "type": "DOUBLE" if op_raw == "AVG" else ("BIGINT" if op_raw == "COUNT" else col_type_map.get(target_col, ""))})
+
+        # 复用 WHERE / SEARCH 构造
+        params = []
+        where_clause, params = build_where(json.loads(filters) if filters else [], params, col_list)
+        if search:
+            search_clause, params = build_search_clause(col_list, search, params)
+            if search_clause:
+                where_clause = (where_clause + " AND " + search_clause) if where_clause else ("WHERE " + search_clause)
+
+        # 排序：默认按第一个聚合项 DESC，否则按 group_by ASC
+        if sort_col and sort_col in used_aliases:
+            order_alias = sort_col
+        elif len(result_alias_list) > 1:
+            order_alias = result_alias_list[1]
+            sort_dir = sort_dir or "desc"
+        else:
+            order_alias = group_by
+            sort_dir = sort_dir or "asc"
+        order_direction = "DESC" if sort_dir.lower() == "desc" else "ASC"
+
+        offset = (page - 1) * page_size
+
+        # 翻页时跳过 distinct group count 全表扫描
+        total = None
+        if not skip_count:
+            total = conn.execute(
+                f'SELECT COUNT(*) FROM (SELECT "{group_by}" FROM "{table_name}" {where_clause} GROUP BY "{group_by}") AS _grp',
+                params,
+            ).fetchone()[0]
+
+        select_sql = ", ".join(select_parts)
+        sql = (
+            f'SELECT {select_sql} FROM "{table_name}" {where_clause} '
+            f'GROUP BY "{group_by}" ORDER BY "{order_alias}" {order_direction} NULLS LAST '
+            f'LIMIT {page_size} OFFSET {offset}'
+        )
+        rows_raw = conn.execute(sql, params).fetchall()
+        rows = [dict(zip(result_alias_list, row)) for row in rows_raw]
+        for row in rows:
+            for k, v in row.items():
+                if not isinstance(v, (str, int, float, bool, type(None))):
+                    row[k] = str(v)
+
+        return {
+            "columns": result_col_types,
+            "rows": rows,
+            "total": total,
+            "page": page,
+            "page_size": page_size,
+            "total_pages": (max(1, (total + page_size - 1) // page_size) if total is not None else None),
+            "group_by": group_by,
+            "aggs": aggs_list,
+            "skipped_count": skip_count,
+        }
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(500, str(e))
 

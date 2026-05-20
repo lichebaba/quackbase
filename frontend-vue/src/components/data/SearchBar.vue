@@ -31,20 +31,20 @@ function onInput(e) {
   clearTimeout(debounceTimer)
   debounceTimer = setTimeout(() => {
     dataStore.setSearch(localVal.value)
-    dataStore.loadData(tablesStore.currentTable)
+    if (dataStore.viewMode !== 'group') dataStore.loadData(tablesStore.currentTable)
   }, 400)
 }
 
 function doSearch() {
   clearTimeout(debounceTimer)
   dataStore.setSearch(localVal.value)
-  dataStore.loadData(tablesStore.currentTable)
+  if (dataStore.viewMode !== 'group') dataStore.loadData(tablesStore.currentTable)
 }
 
 function clearSearch() {
   localVal.value = ''
   dataStore.setSearch('')
-  dataStore.loadData(tablesStore.currentTable)
+  if (dataStore.viewMode !== 'group') dataStore.loadData(tablesStore.currentTable)
 }
 </script>
 
