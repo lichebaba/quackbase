@@ -294,9 +294,7 @@ watch(() => tablesStore.currentTable, () => {
   display: flex;
   flex-direction: column;
   gap: 12px;
-  overflow: hidden;
   min-height: 0;
-  padding-bottom: 12px;
 }
 
 .config-card {
@@ -305,7 +303,7 @@ watch(() => tablesStore.currentTable, () => {
 
 .result-card {
   flex: 1;
-  min-height: 0;
+  min-height: 480px;
 }
 
 .config-card-actions {

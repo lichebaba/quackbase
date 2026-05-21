@@ -109,8 +109,9 @@ onMounted(() => {
   display: flex;
   flex-direction: column;
   gap: 12px;
-  padding: 12px 16px 0;
-  overflow: hidden;
+  padding: 12px 16px;
+  overflow-y: auto;
+  min-height: 0;
 }
 
 .filter-card {
@@ -183,7 +184,6 @@ onMounted(() => {
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
-  margin-bottom: 12px;
-  min-height: 0;
+  min-height: 480px;
 }
 </style>

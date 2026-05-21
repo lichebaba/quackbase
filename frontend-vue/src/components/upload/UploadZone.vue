@@ -37,9 +37,18 @@
       </select>
     </div>
     <div v-if="pendingFiles.length > 0" class="pending-files">
-      <div class="pending-label">待导入文件（{{ pendingFiles.length }} 个）</div>
-      <div v-for="(f, i) in pendingFiles" :key="i" class="pending-file-row">
+      <div class="pending-toolbar">
+        <span class="pending-label">
+          <template v-if="isZipMode">已选 {{ selectedZipCount }} / 共 {{ pendingFiles.length }}</template>
+          <template v-else>待导入文件（{{ pendingFiles.length }} 个）</template>
+        </span>
+        <button v-if="isZipMode" class="btn-toggle-all" @click="toggleAllZipFiles">
+          {{ allZipSelected ? '全不选' : '全选' }}
+        </button>
+      </div>
+      <div v-for="(f, i) in pendingFiles" :key="i" class="pending-file-row" :class="{ 'pending-file-row-off': isZipMode && !f.include }">
         <div class="pending-file">
+          <input v-if="isZipMode" type="checkbox" v-model="f.include" class="file-check" title="是否导入" />
           <span class="file-icon">📄</span>
           <span class="file-name">{{ f.relativePath || f.file.name }}</span>
           <span class="file-size">{{ formatSize(f.size ?? f.file?.size ?? 0) }}</span>
@@ -47,7 +56,7 @@
         </div>
         <div v-if="isZipMode || uploadMode === 'replace'" class="table-name-row">
           <label class="table-name-label">表名</label>
-          <input class="table-name-input" v-model="f.tableName" placeholder="自动生成" />
+          <input class="table-name-input" v-model="f.tableName" placeholder="自动生成" :disabled="isZipMode && !f.include" />
         </div>
       </div>
     </div>
@@ -147,11 +156,21 @@ const previewGroups = ref([])
 const canConfirm = computed(() => {
   if (pendingFiles.value.length === 0) return false
   if (isZipMode.value) {
-    return pendingFiles.value.every(f => f.tableName && f.tableName.trim())
+    const sel = pendingFiles.value.filter(f => f.include)
+    if (sel.length === 0) return false
+    return sel.every(f => f.tableName && f.tableName.trim())
   }
   if (uploadMode.value === 'append' && !targetTable.value) return false
   return true
 })
+
+const selectedZipCount = computed(() => pendingFiles.value.filter(f => f.include).length)
+const allZipSelected = computed(() => pendingFiles.value.length > 0 && pendingFiles.value.every(f => f.include))
+
+function toggleAllZipFiles() {
+  const next = !allZipSelected.value
+  pendingFiles.value.forEach(f => { f.include = next })
+}
 
 const canConfirmSheetPreview = computed(() => {
   const selected = previewGroups.value.filter(g => g.include)
@@ -236,6 +255,7 @@ async function openZipPreview(zipFile) {
       relativePath: f.relative_path,
       tableName: f.default_table_name,
       size: f.size,
+      include: true,
     }))
     zipFilename.value = data.filename
   } catch (e) {
@@ -308,15 +328,20 @@ async function confirmUpload() {
 
 async function confirmZipImport() {
   if (!originalZipFile.value) return
+  const selectedItems = pendingFiles.value.filter(f => f.include)
+  if (selectedItems.length === 0) {
+    toast.add('请至少选择一个文件导入', 'error')
+    return
+  }
   importing.value = true
   importProgress.value = 10
-  importProgressText.value = '正在导入 ZIP 内容...'
+  importProgressText.value = `正在导入 ${selectedItems.length} 个文件...`
   try {
     const fd = new FormData()
     fd.append('file', originalZipFile.value)
     fd.append('plan', JSON.stringify({
       skip_comments: skipComments.value,
-      items: pendingFiles.value.map(f => ({
+      items: selectedItems.map(f => ({
         relative_path: f.relativePath,
         table_name: f.tableName.trim(),
       })),
@@ -644,6 +669,13 @@ function formatSize(bytes) {
     gap: 10px;
   }
 
+  &-toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+  }
+
   &-label {
     font-size: 11px;
     color: var(--text-sub);
@@ -654,6 +686,11 @@ function formatSize(bytes) {
     display: flex;
     flex-direction: column;
     gap: 8px;
+    transition: opacity 0.15s;
+
+    &-off {
+      opacity: 0.45;
+    }
   }
 
   &-file {
@@ -665,6 +702,32 @@ function formatSize(bytes) {
     border: 1px solid var(--border-light);
     border-radius: var(--radius);
   }
+}
+
+.btn-toggle-all {
+  font-family: var(--font-ui);
+  font-size: 11px;
+  font-weight: 600;
+  background: none;
+  border: 1px solid var(--border-light);
+  color: var(--text-sub);
+  padding: 2px 10px;
+  border-radius: 12px;
+  cursor: pointer;
+  transition: all 0.15s;
+
+  &:hover {
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+}
+
+.file-check {
+  flex-shrink: 0;
+  width: 14px;
+  height: 14px;
+  accent-color: var(--accent);
+  cursor: pointer;
 }
 
 .file {
